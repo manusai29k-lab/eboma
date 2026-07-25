@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "allow": [
+      "PowerShell(node -v)",
+      "PowerShell(pnpm *)",
+      "PowerShell(Copy-Item *)",
+      "PowerShell(Get-Command *)",
+      "PowerShell(npm view)"
+    ]
+  }
+}
