@@ -481,6 +481,56 @@ export const appRouter = router({
       }),
   }),
 
+  // ==================== Settlements ====================
+  settlements: router({
+    // Admin-only: full-sweep settle a merchant's entire current unsettled
+    // balance in one atomic transaction (see db.createSettlement). merchantId
+    // is admin-supplied by design — admin acts on behalf of any merchant,
+    // contrast with the merchant-facing endpoints below which never take a
+    // client-supplied merchantId.
+    create: appAdminProcedure
+      .input(z.object({
+        merchantId: z.number(),
+        note: z.string().max(1000).optional(),
+      }))
+      .mutation(async ({ input }) => {
+        const merchant = await db.getMerchantById(input.merchantId);
+        if (!merchant) throw new Error("التاجر غير موجود");
+        const settlement = await db.createSettlement(merchant, input.note);
+        try {
+          await notifyOwner({
+            title: "تسوية أرباح جديدة - EBOMA",
+            content: `تمت تسوية أرباح التاجر ${merchant.name}\nالمبلغ: ${settlement.amount}\nعدد الطلبات المسلمة: ${settlement.deliveredCount}\nعدد الملغاة/المرتجعة: ${settlement.cancelledCount}`,
+          });
+        } catch {}
+        return settlement;
+      }),
+
+    // Admin audit trail, optionally filtered.
+    list: appAdminProcedure
+      .input(z.object({
+        merchantId: z.number().optional(),
+        merchantType: z.enum(["physical", "digital"]).optional(),
+        startDate: z.date().optional(),
+        endDate: z.date().optional(),
+      }))
+      .query(async ({ input }) => {
+        return await db.getFilteredSettlements(input);
+      }),
+
+    // Merchant-facing: own current unsettled balance + the delivered rows
+    // that make it up. Uses ctx.merchant.id only — never a client-supplied
+    // merchantId (same IDOR-safe convention as physicalOrders.myOrders).
+    myBalance: merchantProcedure.query(async ({ ctx }) => {
+      return await db.getUnsettledBalanceForMerchant(ctx.merchant);
+    }),
+
+    // Merchant-facing: own settlement history.
+    myHistory: merchantProcedure.query(async ({ ctx }) => {
+      return await db.getSettlementsByMerchant(ctx.merchant.id);
+    }),
+  }),
+
   // ==================== Dashboard Stats (Admin) ====================
   dashboard: router({
     stats: appAdminProcedure.query(async () => {

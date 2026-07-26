@@ -10,11 +10,13 @@ import MerchantDashboard from "./pages/MerchantDashboard";
 import MerchantPhysical from "./pages/MerchantPhysical";
 import MerchantDigital from "./pages/MerchantDigital";
 import MerchantOrders from "./pages/MerchantOrders";
+import MerchantEarnings from "./pages/MerchantEarnings";
 import AdminDashboard from "./pages/AdminDashboard";
 import AdminOrders from "./pages/AdminOrders";
 import AdminProducts from "./pages/AdminProducts";
 import AdminMerchants from "./pages/AdminMerchants";
 import AdminReports from "./pages/AdminReports";
+import AdminSettlements from "./pages/AdminSettlements";
 import AdminLayout from "./pages/admin/AdminLayout";
 
 function Router() {
@@ -31,6 +33,7 @@ function Router() {
       <Route path="/merchant/physical" component={MerchantPhysical} />
       <Route path="/merchant/digital" component={MerchantDigital} />
       <Route path="/merchant/orders" component={MerchantOrders} />
+      <Route path="/merchant/earnings" component={MerchantEarnings} />
 
       {/* Admin Routes - wrapped in AdminLayout */}
       <Route path="/admin" nest>
@@ -41,6 +44,7 @@ function Router() {
             <Route path="/products" component={AdminProducts} />
             <Route path="/merchants" component={AdminMerchants} />
             <Route path="/reports" component={AdminReports} />
+            <Route path="/settlements" component={AdminSettlements} />
           </Switch>
         </AdminLayout>
       </Route>

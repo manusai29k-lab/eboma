@@ -1,4 +1,4 @@
-import { eq, desc, and, gte, lte, sql, like, or, count, sum } from "drizzle-orm";
+import { eq, desc, and, gte, lte, sql, like, or, count, sum, isNull, inArray } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/mysql2";
 import {
   InsertUser, users,
@@ -8,6 +8,7 @@ import {
   DigitalProduct, digitalProducts,
   PhysicalOrder, physicalOrders,
   DigitalSale, digitalSales,
+  Settlement, settlements,
 } from "../drizzle/schema";
 import { ENV } from './_core/env';
 
@@ -397,6 +398,205 @@ export async function getFilteredDigitalSales(filters: {
   return await db.select().from(digitalSales).where(and(...conditions)).orderBy(desc(digitalSales.createdAt));
 }
 
+// ==================== Settlements ====================
+
+// Terminal statuses that participate in a settlement sweep. Non-terminal
+// physical statuses (new/preparing/shipped) are never touched — an order
+// still in the pipeline can't be settled.
+const PHYSICAL_TERMINAL_STATUSES = ["delivered", "cancelled", "returned"] as const;
+const DIGITAL_TERMINAL_STATUSES = ["delivered", "cancelled"] as const;
+
+/**
+ * Computes a merchant's current unsettled balance. Single source of truth
+ * for the physical-vs-digital branch, reused by getMerchantPerformance
+ * (additive fields only), createSettlement (to snapshot the amount inside
+ * the same transaction), and settlements.myBalance. Mirrors
+ * getMerchantPerformance's existing per-type branching, scoped additionally
+ * to settlementId IS NULL.
+ *
+ * deliveredRows are the specific delivered (money-contributing) rows, used
+ * for the merchant-facing "orders that make up my current balance" list.
+ */
+export async function getUnsettledBalanceForMerchant(merchant: Merchant): Promise<{
+  amount: number;
+  deliveredCount: number;
+  cancelledCount: number; // cancelled + returned combined
+  deliveredRows: Array<{ id: number; productType: string; amount: number; createdAt: Date }>;
+}> {
+  const db = await getDb();
+  if (!db) return { amount: 0, deliveredCount: 0, cancelledCount: 0, deliveredRows: [] };
+
+  if (merchant.merchantType === "physical") {
+    const rows = await db.select({
+      id: physicalOrders.id,
+      productType: physicalOrders.productType,
+      status: physicalOrders.status,
+      commissionAtOrderTime: physicalOrders.commissionAtOrderTime,
+      createdAt: physicalOrders.createdAt,
+    }).from(physicalOrders).where(and(
+      eq(physicalOrders.merchantId, merchant.id),
+      isNull(physicalOrders.settlementId),
+      inArray(physicalOrders.status, PHYSICAL_TERMINAL_STATUSES),
+    ));
+
+    const delivered = rows.filter(r => r.status === "delivered");
+    const cancelled = rows.filter(r => r.status !== "delivered");
+    return {
+      amount: delivered.reduce((acc, r) => acc + r.commissionAtOrderTime, 0),
+      deliveredCount: delivered.length,
+      cancelledCount: cancelled.length,
+      deliveredRows: delivered.map(r => ({ id: r.id, productType: r.productType, amount: r.commissionAtOrderTime, createdAt: r.createdAt })),
+    };
+  }
+
+  const rows = await db.select({
+    id: digitalSales.id,
+    productType: digitalSales.productType,
+    status: digitalSales.status,
+    productPrice: digitalSales.productPrice,
+    digitalLevelAtSaleTime: digitalSales.digitalLevelAtSaleTime,
+    createdAt: digitalSales.createdAt,
+  }).from(digitalSales).where(and(
+    eq(digitalSales.merchantId, merchant.id),
+    isNull(digitalSales.settlementId),
+    inArray(digitalSales.status, DIGITAL_TERMINAL_STATUSES),
+  ));
+
+  const delivered = rows.filter(r => r.status === "delivered");
+  const cancelled = rows.filter(r => r.status !== "delivered");
+  return {
+    amount: delivered.reduce((acc, r) => acc + Math.floor(r.productPrice * digitalLevelToPercent(r.digitalLevelAtSaleTime)), 0),
+    deliveredCount: delivered.length,
+    cancelledCount: cancelled.length,
+    deliveredRows: delivered.map(r => ({
+      id: r.id,
+      productType: r.productType,
+      amount: Math.floor(r.productPrice * digitalLevelToPercent(r.digitalLevelAtSaleTime)),
+      createdAt: r.createdAt,
+    })),
+  };
+}
+
+/**
+ * Atomically settles a merchant's full current unsettled balance: inserts
+ * one settlements row, then stamps that row's id onto every terminal-status,
+ * currently-unsettled physicalOrders/digitalSales row for that merchant.
+ * Wrapped in a transaction so a partial failure never leaves an orphaned
+ * settlement row (with no linked orders) or vice versa. Always a full
+ * settlement — no partial subset selection. Recomputes the balance inside
+ * the transaction (not reusing a caller-supplied figure) so a race with a
+ * newly-arrived order between page load and click can't create a stale
+ * settlement amount.
+ */
+export async function createSettlement(merchant: Merchant, note?: string): Promise<Settlement> {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+
+  return await db.transaction(async (tx) => {
+    if (merchant.merchantType === "physical") {
+      const rows = await tx.select({
+        id: physicalOrders.id,
+        status: physicalOrders.status,
+        commissionAtOrderTime: physicalOrders.commissionAtOrderTime,
+      }).from(physicalOrders).where(and(
+        eq(physicalOrders.merchantId, merchant.id),
+        isNull(physicalOrders.settlementId),
+        inArray(physicalOrders.status, PHYSICAL_TERMINAL_STATUSES),
+      ));
+
+      if (rows.length === 0) {
+        throw new Error("لا يوجد رصيد قابل للتسوية لهذا التاجر");
+      }
+
+      const delivered = rows.filter(r => r.status === "delivered");
+      const cancelled = rows.filter(r => r.status !== "delivered");
+      const amount = delivered.reduce((acc, r) => acc + r.commissionAtOrderTime, 0);
+
+      await tx.insert(settlements).values({
+        merchantId: merchant.id,
+        merchantName: merchant.name,
+        merchantType: "physical",
+        amount,
+        deliveredCount: delivered.length,
+        cancelledCount: cancelled.length,
+        note: note || null,
+      });
+      const [created] = await tx.select().from(settlements)
+        .where(eq(settlements.merchantId, merchant.id))
+        .orderBy(desc(settlements.id)).limit(1);
+
+      await tx.update(physicalOrders)
+        .set({ settlementId: created.id })
+        .where(inArray(physicalOrders.id, rows.map(r => r.id)));
+
+      return created;
+    }
+
+    const rows = await tx.select({
+      id: digitalSales.id,
+      status: digitalSales.status,
+      productPrice: digitalSales.productPrice,
+      digitalLevelAtSaleTime: digitalSales.digitalLevelAtSaleTime,
+    }).from(digitalSales).where(and(
+      eq(digitalSales.merchantId, merchant.id),
+      isNull(digitalSales.settlementId),
+      inArray(digitalSales.status, DIGITAL_TERMINAL_STATUSES),
+    ));
+
+    if (rows.length === 0) {
+      throw new Error("لا يوجد رصيد قابل للتسوية لهذا التاجر");
+    }
+
+    const delivered = rows.filter(r => r.status === "delivered");
+    const cancelled = rows.filter(r => r.status !== "delivered");
+    const amount = delivered.reduce((acc, r) => acc + Math.floor(r.productPrice * digitalLevelToPercent(r.digitalLevelAtSaleTime)), 0);
+
+    await tx.insert(settlements).values({
+      merchantId: merchant.id,
+      merchantName: merchant.name,
+      merchantType: "digital",
+      amount,
+      deliveredCount: delivered.length,
+      cancelledCount: cancelled.length,
+      note: note || null,
+    });
+    const [created] = await tx.select().from(settlements)
+      .where(eq(settlements.merchantId, merchant.id))
+      .orderBy(desc(settlements.id)).limit(1);
+
+    await tx.update(digitalSales)
+      .set({ settlementId: created.id })
+      .where(inArray(digitalSales.id, rows.map(r => r.id)));
+
+    return created;
+  });
+}
+
+export async function getSettlementsByMerchant(merchantId: number): Promise<Settlement[]> {
+  const db = await getDb();
+  if (!db) return [];
+  return await db.select().from(settlements).where(eq(settlements.merchantId, merchantId)).orderBy(desc(settlements.createdAt));
+}
+
+export async function getFilteredSettlements(filters: {
+  merchantId?: number;
+  merchantType?: "physical" | "digital";
+  startDate?: Date;
+  endDate?: Date;
+}): Promise<Settlement[]> {
+  const db = await getDb();
+  if (!db) return [];
+  const conditions = [];
+  if (filters.merchantId) conditions.push(eq(settlements.merchantId, filters.merchantId));
+  if (filters.merchantType) conditions.push(eq(settlements.merchantType, filters.merchantType));
+  if (filters.startDate) conditions.push(gte(settlements.createdAt, filters.startDate));
+  if (filters.endDate) conditions.push(lte(settlements.createdAt, filters.endDate));
+  if (conditions.length === 0) {
+    return await db.select().from(settlements).orderBy(desc(settlements.createdAt));
+  }
+  return await db.select().from(settlements).where(and(...conditions)).orderBy(desc(settlements.createdAt));
+}
+
 // ==================== Dashboard Stats ====================
 
 // Single source of truth for the digital commission percentage. Always called
@@ -524,6 +724,12 @@ export async function getMerchantPerformance() {
       adminProfit = digiRevNum - merchantEarnings;
     }
 
+    // Additive fields only — merchantEarnings/adminProfit above remain
+    // lifetime totals (unchanged). currentBalance is the still-unpaid subset
+    // (see getUnsettledBalanceForMerchant), used by the admin UI to decide
+    // whether the "تسوية الأرباح" button should show for this merchant.
+    const unsettled = await getUnsettledBalanceForMerchant(merchant);
+
     result.push({
       id: merchant.id,
       name: merchant.name,
@@ -541,6 +747,9 @@ export async function getMerchantPerformance() {
       totalRevenue: physRevNum + digiRevNum,
       merchantEarnings,
       adminProfit,
+      currentBalance: unsettled.amount,
+      currentBalanceDeliveredCount: unsettled.deliveredCount,
+      currentBalanceCancelledCount: unsettled.cancelledCount,
       createdAt: merchant.createdAt,
       lastSignedIn: merchant.lastSignedIn,
     });

@@ -4,10 +4,11 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from "@/components/ui/dialog";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { Users, Trash2, Plus, KeyRound, Copy, RefreshCw, Check } from "lucide-react";
+import { Users, Trash2, Plus, KeyRound, Copy, RefreshCw, Check, Wallet } from "lucide-react";
 import { toast } from "sonner";
 import { useLocation } from "wouter";
 import { useState } from "react";
@@ -67,6 +68,22 @@ export default function AdminMerchants() {
     },
   });
 
+  const settleMutation = trpc.settlements.create.useMutation({
+    onSuccess: () => {
+      toast.success("تمت تسوية الأرباح بنجاح");
+      merchants.refetch();
+      performance.refetch();
+      setShowSettleDialog(false);
+      setSettleNote("");
+      setSettleMerchantId(null);
+      setSettleLoading(false);
+    },
+    onError: (error: any) => {
+      toast.error(error.message || "فشلت عملية التسوية");
+      setSettleLoading(false);
+    },
+  });
+
   // Create merchant dialog state
   const [showCreateDialog, setShowCreateDialog] = useState(false);
   const [createLoading, setCreateLoading] = useState(false);
@@ -85,6 +102,14 @@ export default function AdminMerchants() {
   const [resetGeneratedPassword, setResetGeneratedPassword] = useState("");
   const [resetLoading, setResetLoading] = useState(false);
   const [copied, setCopied] = useState(false);
+
+  // Settle earnings dialog state
+  const [showSettleDialog, setShowSettleDialog] = useState(false);
+  const [settleMerchantId, setSettleMerchantId] = useState<number | null>(null);
+  const [settleMerchantName, setSettleMerchantName] = useState("");
+  const [settleAmount, setSettleAmount] = useState(0);
+  const [settleNote, setSettleNote] = useState("");
+  const [settleLoading, setSettleLoading] = useState(false);
 
   const perfMap = new Map(performance.data?.map(p => [p.id, p]));
 
@@ -140,6 +165,20 @@ export default function AdminMerchants() {
     });
   };
 
+  const openSettleDialog = (merchantId: number, merchantName: string, amount: number) => {
+    setSettleMerchantId(merchantId);
+    setSettleMerchantName(merchantName);
+    setSettleAmount(amount);
+    setSettleNote("");
+    setShowSettleDialog(true);
+  };
+
+  const handleSettle = () => {
+    if (!settleMerchantId) return;
+    setSettleLoading(true);
+    settleMutation.mutate({ merchantId: settleMerchantId, note: settleNote || undefined });
+  };
+
   const copyToClipboard = (text: string) => {
     navigator.clipboard.writeText(text).then(() => {
       setCopied(true);
@@ -186,6 +225,7 @@ export default function AdminMerchants() {
                     <TableHead>إجمالي المبيعات</TableHead>
                     <TableHead>أرباح التاجر</TableHead>
                     <TableHead>ربح المدير</TableHead>
+                    <TableHead>الرصيد الحالي</TableHead>
                     <TableHead>آخر دخول</TableHead>
                     <TableHead>إجراءات</TableHead>
                   </TableRow>
@@ -235,6 +275,9 @@ export default function AdminMerchants() {
                         <TableCell className="font-semibold text-amber-600">
                           {(perf?.adminProfit ?? 0).toLocaleString()} د.ع
                         </TableCell>
+                        <TableCell className="font-semibold text-teal-600">
+                          {(perf?.currentBalance ?? 0).toLocaleString()} د.ع
+                        </TableCell>
                         <TableCell className="text-xs text-muted-foreground">
                           {merchant.lastSignedIn
                             ? new Date(merchant.lastSignedIn).toLocaleDateString("ar-IQ")
@@ -242,6 +285,16 @@ export default function AdminMerchants() {
                         </TableCell>
                         <TableCell>
                           <div className="flex items-center gap-1">
+                            {(perf?.currentBalance ?? 0) > 0 && (
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                title="تسوية الأرباح"
+                                onClick={() => openSettleDialog(merchant.id, merchant.name, perf?.currentBalance ?? 0)}
+                              >
+                                <Wallet className="w-4 h-4 text-teal-600" />
+                              </Button>
+                            )}
                             <Button
                               variant="ghost"
                               size="icon"
@@ -446,6 +499,48 @@ export default function AdminMerchants() {
                 ) : (
                   <><KeyRound className="w-4 h-4" /> تحديث كلمة السر</>
                 )}
+              </Button>
+            </DialogFooter>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Settle Earnings Dialog */}
+      <Dialog open={showSettleDialog} onOpenChange={setShowSettleDialog}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>تسوية الأرباح</DialogTitle>
+            <DialogDescription>
+              تسوية أرباح التاجر: <strong>{settleMerchantName}</strong>
+              <br />
+              سيتم اعتبار كل الرصيد الحالي مسلّماً بالكامل، ولا يمكن التراجع عن هذه العملية.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div className="p-3 rounded-lg bg-teal-50 border border-teal-200">
+              <p className="text-sm font-semibold text-teal-800">المبلغ الذي سيتم تسليمه:</p>
+              <p className="text-2xl font-bold text-teal-900">{settleAmount.toLocaleString()} د.ع</p>
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="settle-note">ملاحظة (اختياري)</Label>
+              <Textarea
+                id="settle-note"
+                placeholder="مثال: تم التسليم نقداً بتاريخ ..."
+                value={settleNote}
+                onChange={(e) => setSettleNote(e.target.value)}
+              />
+            </div>
+            <DialogFooter>
+              <Button type="button" variant="outline" onClick={() => setShowSettleDialog(false)}>
+                إلغاء
+              </Button>
+              <Button
+                type="button"
+                onClick={handleSettle}
+                disabled={settleLoading}
+                className="gap-2"
+              >
+                {settleLoading ? "جاري التسوية..." : (<><Wallet className="w-4 h-4" /> تأكيد التسوية</>)}
               </Button>
             </DialogFooter>
           </div>

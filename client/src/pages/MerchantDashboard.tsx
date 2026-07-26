@@ -1,7 +1,7 @@
 import { trpc } from "@/lib/trpc";
 import { Button } from "@/components/ui/button";
 import { useLocation } from "wouter";
-import { Package, Smartphone, ListOrdered, LogOut, ArrowLeft, Sparkles } from "lucide-react";
+import { Package, Smartphone, ListOrdered, LogOut, ArrowLeft, Sparkles, Wallet } from "lucide-react";
 import { toast } from "sonner";
 import { useEffect } from "react";
 
@@ -152,6 +152,25 @@ export default function MerchantDashboard() {
                 <div>
                   <p className="font-bold text-white">طلباتي السابقة</p>
                   <p className="text-sm text-white/40">عرض جميع طلباتك السابقة وحالتها</p>
+                </div>
+              </div>
+              <ArrowLeft className="w-5 h-5 text-white/30 group-hover:text-white/60 group-hover:-translate-x-1 transition-all" />
+            </div>
+          </div>
+
+          {/* My Earnings */}
+          <div
+            className="group relative cursor-pointer rounded-2xl bg-white/[0.03] border border-teal-500/20 backdrop-blur-sm p-5 mt-4 transition-all duration-300 hover:bg-white/[0.06] hover:border-teal-500/40"
+            onClick={() => setLocation("/merchant/earnings")}
+          >
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-4">
+                <div className="flex items-center justify-center w-12 h-12 rounded-xl bg-gradient-to-br from-teal-500 to-emerald-700 shadow-lg shadow-teal-500/20">
+                  <Wallet className="w-6 h-6 text-white" />
+                </div>
+                <div>
+                  <p className="font-bold text-white">أرباحي</p>
+                  <p className="text-sm text-white/40">رصيدك الحالي وسجل التسويات</p>
                 </div>
               </div>
               <ArrowLeft className="w-5 h-5 text-white/30 group-hover:text-white/60 group-hover:-translate-x-1 transition-all" />

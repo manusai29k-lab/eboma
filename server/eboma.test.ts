@@ -38,6 +38,10 @@ vi.mock("./db", () => ({
   deleteDigitalProduct: vi.fn(),
   getDashboardStats: vi.fn(),
   getDailySalesStats: vi.fn(),
+  getUnsettledBalanceForMerchant: vi.fn(),
+  createSettlement: vi.fn(),
+  getSettlementsByMerchant: vi.fn(),
+  getFilteredSettlements: vi.fn(),
 }));
 
 // Mock notification
@@ -411,6 +415,8 @@ describe("Digital Sales", () => {
       customerPhone: "07700000000",
       productType: "Course",
       productPrice: 25000,
+      proofImageBase64: "data:image/png;base64,AAAA",
+      proofImageName: "proof.png",
     });
 
     expect(result.id).toBe(1);
@@ -430,6 +436,8 @@ describe("Digital Sales", () => {
       customerPhone: "07700000000",
       productType: "Course",
       productPrice: 25000,
+      proofImageBase64: "data:image/png;base64,AAAA",
+      proofImageName: "proof.png",
     });
 
     expect(db.createDigitalSale).toHaveBeenCalledWith(
@@ -447,6 +455,8 @@ describe("Digital Sales", () => {
       customerPhone: "07700000001",
       productType: "Course",
       productPrice: 25000,
+      proofImageBase64: "data:image/png;base64,AAAA",
+      proofImageName: "proof.png",
     });
 
     expect(db.createDigitalSale).toHaveBeenCalledWith(
@@ -643,5 +653,125 @@ describe("Merchants Management (admin-only creation)", () => {
         digitalLevel: "1",
       })
     ).rejects.toThrow();
+  });
+});
+
+describe("Settlements", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("should reject settlements.myBalance for an anonymous caller (no merchant session)", async () => {
+    const ctx = createPublicContext();
+    const caller = appRouter.createCaller(ctx);
+
+    await expect(caller.settlements.myBalance()).rejects.toThrow();
+  });
+
+  it("should scope settlements.myBalance to the session's own merchant, never a client-supplied id (IDOR fix)", async () => {
+    vi.mocked(db.getUnsettledBalanceForMerchant).mockResolvedValue({
+      amount: 5000, deliveredCount: 2, cancelledCount: 1, deliveredRows: [],
+    });
+
+    const ctx = createMerchantContext(7);
+    const caller = appRouter.createCaller(ctx);
+    await caller.settlements.myBalance();
+
+    // The router must pass the whole ctx.merchant object through (id=7), it
+    // must never accept or forward a client-supplied merchantId.
+    expect(db.getUnsettledBalanceForMerchant).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 7 })
+    );
+  });
+
+  it("should reject settlements.myHistory for an anonymous caller", async () => {
+    const ctx = createPublicContext();
+    const caller = appRouter.createCaller(ctx);
+
+    await expect(caller.settlements.myHistory()).rejects.toThrow();
+  });
+
+  it("should scope settlements.myHistory to the session's own merchant id, never a client-supplied one (IDOR fix)", async () => {
+    vi.mocked(db.getSettlementsByMerchant).mockResolvedValue([]);
+
+    const ctx = createMerchantContext(7);
+    const caller = appRouter.createCaller(ctx);
+    await caller.settlements.myHistory();
+
+    expect(db.getSettlementsByMerchant).toHaveBeenCalledWith(7);
+    expect(db.getSettlementsByMerchant).not.toHaveBeenCalledWith(99);
+  });
+
+  it("should reject settlements.create for an anonymous caller (admin-only gate)", async () => {
+    const ctx = createPublicContext();
+    const caller = appRouter.createCaller(ctx);
+
+    await expect(
+      caller.settlements.create({ merchantId: 1 })
+    ).rejects.toThrow();
+  });
+
+  it("should reject settlements.create for a logged-in merchant (admin-only, not merchant-self-service)", async () => {
+    const ctx = createMerchantContext(1);
+    const caller = appRouter.createCaller(ctx);
+
+    await expect(
+      caller.settlements.create({ merchantId: 1 })
+    ).rejects.toThrow();
+  });
+
+  it("should settle the resolved merchant's balance as admin", async () => {
+    vi.mocked(db.getMerchantById).mockResolvedValue({
+      id: 3, name: "Test Merchant", username: "testuser", passcode: "1234",
+      merchantType: "physical", commission: 1000, digitalLevel: "1",
+      failedAttempts: 0, lockedUntil: null,
+      createdAt: new Date(), updatedAt: new Date(), lastSignedIn: new Date(),
+    } as any);
+    vi.mocked(db.createSettlement).mockResolvedValue({
+      id: 10, merchantId: 3, merchantName: "Test Merchant", merchantType: "physical",
+      amount: 3000, deliveredCount: 3, cancelledCount: 0, note: "دفعة نقدية",
+      createdAt: new Date(),
+    } as any);
+
+    const ctx = createAdminContext();
+    const caller = appRouter.createCaller(ctx);
+    const result = await caller.settlements.create({ merchantId: 3, note: "دفعة نقدية" });
+
+    expect(db.createSettlement).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 3 }),
+      "دفعة نقدية"
+    );
+    expect(result.amount).toBe(3000);
+  });
+
+  it("should throw when settling a merchant that no longer exists", async () => {
+    vi.mocked(db.getMerchantById).mockResolvedValue(undefined as any);
+
+    const ctx = createAdminContext();
+    const caller = appRouter.createCaller(ctx);
+
+    await expect(
+      caller.settlements.create({ merchantId: 999 })
+    ).rejects.toThrow();
+    expect(db.createSettlement).not.toHaveBeenCalled();
+  });
+
+  it("should list settlements filtered as admin", async () => {
+    vi.mocked(db.getFilteredSettlements).mockResolvedValue([]);
+
+    const ctx = createAdminContext();
+    const caller = appRouter.createCaller(ctx);
+    await caller.settlements.list({ merchantId: 3 });
+
+    expect(db.getFilteredSettlements).toHaveBeenCalledWith(
+      expect.objectContaining({ merchantId: 3 })
+    );
+  });
+
+  it("should reject settlements.list for a non-admin caller", async () => {
+    const ctx = createMerchantContext(1);
+    const caller = appRouter.createCaller(ctx);
+
+    await expect(caller.settlements.list({})).rejects.toThrow();
   });
 });

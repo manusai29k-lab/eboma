@@ -119,6 +119,12 @@ export const physicalOrders = mysqlTable("physical_orders", {
   // backfill (server/scripts/backfillCommissionSnapshots.ts) — approximate for
   // historical data only.
   commissionAtOrderTime: int("commissionAtOrderTime").notNull().default(0),
+  // NULL = not yet settled (still counts toward the merchant's current
+  // settlement balance if status is terminal). Set once by an admin
+  // settlement sweep (server/db.ts createSettlement), never cleared or
+  // reassigned afterward. No FK (this schema has none anywhere) — app-level
+  // integrity only, same as merchantId above.
+  settlementId: int("settlementId"),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
 });
@@ -145,9 +151,45 @@ export const digitalSales = mysqlTable("digital_sales", {
   // separately, so there is a single source of truth. Existing rows default to
   // "1" pending a one-time backfill — approximate for historical data only.
   digitalLevelAtSaleTime: mysqlEnum("digitalLevelAtSaleTime", ["1", "2", "3"]).default("1").notNull(),
+  // Same semantics as physicalOrders.settlementId above.
+  settlementId: int("settlementId"),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
 });
 
 export type DigitalSale = typeof digitalSales.$inferSelect;
 export type InsertDigitalSale = typeof digitalSales.$inferInsert;
+
+/**
+ * Profit settlements ("تسوية الأرباح") - created by admin per merchant. One
+ * settlement always sweeps up ALL of that merchant's currently-unsettled
+ * terminal-status orders/sales in a single atomic operation (see
+ * server/db.ts createSettlement) — there is no partial settlement of a
+ * subset. Historical physicalOrders/digitalSales rows are never deleted or
+ * mutated beyond stamping their settlementId.
+ * merchantType is duplicated here (no FKs anywhere in this schema) so a
+ * later merchantType change on the merchant can't retroactively reclassify
+ * a past settlement.
+ * amount: total IQD paid out in this settlement = sum of commissionAtOrderTime
+ * (physical) or productPrice*digitalLevelToPercent(digitalLevelAtSaleTime)
+ * (digital), across only the delivered rows swept into it.
+ * deliveredCount: number of delivered rows swept in (these make up amount).
+ * cancelledCount: number of cancelled+returned rows swept in — contribute 0
+ * to amount but are still closed out of the unsettled pool so they never
+ * resurface in a later settlement. "returned" folds into this same counter
+ * (no separate returned counter).
+ */
+export const settlements = mysqlTable("settlements", {
+  id: int("id").autoincrement().primaryKey(),
+  merchantId: int("merchantId").notNull(),
+  merchantName: varchar("merchantName", { length: 255 }).notNull(),
+  merchantType: mysqlEnum("merchantType", ["physical", "digital"]).notNull(),
+  amount: int("amount").notNull(),
+  deliveredCount: int("deliveredCount").default(0).notNull(),
+  cancelledCount: int("cancelledCount").default(0).notNull(),
+  note: text("note"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+
+export type Settlement = typeof settlements.$inferSelect;
+export type InsertSettlement = typeof settlements.$inferInsert;

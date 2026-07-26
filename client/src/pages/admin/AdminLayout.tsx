@@ -8,7 +8,7 @@ import {
   SidebarMenu, SidebarMenuButton, SidebarMenuItem,
   SidebarProvider, SidebarInset, SidebarTrigger,
 } from "@/components/ui/sidebar";
-import { LayoutDashboard, Package, Smartphone, Users, FileText, LogOut, BarChart3 } from "lucide-react";
+import { LayoutDashboard, Package, Smartphone, Users, FileText, LogOut, BarChart3, Wallet } from "lucide-react";
 import { useLocation } from "wouter";
 import { useEffect } from "react";
 
@@ -24,6 +24,7 @@ const menuItems = [
   { icon: Smartphone, label: "المنتجات", path: "/products" },
   { icon: Users, label: "التجار", path: "/merchants" },
   { icon: FileText, label: "التقارير", path: "/reports" },
+  { icon: Wallet, label: "التسويات", path: "/settlements" },
 ];
 
 export default function AdminLayout({ children }: { children: React.ReactNode }) {
