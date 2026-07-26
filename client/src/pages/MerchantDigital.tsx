@@ -59,6 +59,10 @@ export default function MerchantDigital() {
       toast.error("يرجى ملء جميع الحقول المطلوبة");
       return;
     }
+    if (!proofImage || !proofPreview) {
+      toast.error("يجب رفع صورة إثبات التحويل قبل توثيق العملية");
+      return;
+    }
     const price = parseInt(productPrice);
     if (price < 0) {
       toast.error("السعر يجب أن يكون رقماً موجباً");
@@ -66,13 +70,8 @@ export default function MerchantDigital() {
     }
     setIsSubmitting(true);
 
-    let proofImageBase64: string | undefined;
-    let proofImageName: string | undefined;
-
-    if (proofImage && proofPreview) {
-      proofImageBase64 = proofPreview;
-      proofImageName = proofImage.name;
-    }
+    const proofImageBase64 = proofPreview;
+    const proofImageName = proofImage.name;
 
     createMutation.mutate({
       merchantName: merchantMe.data.name,
@@ -149,7 +148,7 @@ export default function MerchantDigital() {
 
               {/* Proof Image Upload */}
               <div className="space-y-2">
-                <Label className="text-white/70 text-sm">صورة إثبات التحويل</Label>
+                <Label className="text-white/70 text-sm">صورة إثبات التحويل *</Label>
                 <div
                   className="border-2 border-dashed border-white/15 rounded-2xl p-6 text-center cursor-pointer hover:border-emerald-500/50 transition-colors bg-white/[0.02]"
                   onClick={() => fileInputRef.current?.click()}

@@ -277,8 +277,8 @@ export const appRouter = router({
         customerPhone: z.string().min(6).max(20),
         productType: z.string().min(1).max(255),
         productPrice: z.number().int().min(0),
-        proofImageBase64: z.string().optional(),
-        proofImageName: z.string().optional(),
+        proofImageBase64: z.string().min(1, "يجب رفع صورة إثبات التحويل قبل توثيق العملية"),
+        proofImageName: z.string().min(1, "يجب رفع صورة إثبات التحويل قبل توثيق العملية"),
       }))
       .mutation(async ({ input, ctx }) => {
         let proofImageKey: string | undefined;
