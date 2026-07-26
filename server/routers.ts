@@ -573,6 +573,11 @@ export const appRouter = router({
       return await db.getDashboardStats();
     }),
 
+    // Merchant-facing trust badge stats — counts only, no financial data.
+    trustStats: merchantProcedure.query(async () => {
+      return await db.getTrustStats();
+    }),
+
     dailySales: appAdminProcedure
       .input(z.object({ days: z.number().int().min(1).max(90).default(30) }))
       .query(async ({ input }) => {

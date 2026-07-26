@@ -708,6 +708,25 @@ export async function getDashboardStats() {
   };
 }
 
+// Lightweight, merchant-safe stats — counts only, no revenue/commission data.
+export async function getTrustStats() {
+  const db = await getDb();
+  if (!db) return { totalMerchants: 0, totalCompletedOrders: 0 };
+
+  const [merchCount] = await db.select({ value: count() }).from(merchants);
+
+  const [physDelivered] = await db.select({ value: count() })
+    .from(physicalOrders).where(eq(physicalOrders.status, "delivered"));
+
+  const [digiDelivered] = await db.select({ value: count() })
+    .from(digitalSales).where(eq(digitalSales.status, "delivered"));
+
+  return {
+    totalMerchants: merchCount?.value ?? 0,
+    totalCompletedOrders: (physDelivered?.value ?? 0) + (digiDelivered?.value ?? 0),
+  };
+}
+
 export async function getMerchantPerformance() {
   const db = await getDb();
   if (!db) return [];

@@ -19,6 +19,10 @@ export default function MerchantDashboard() {
     },
   });
 
+  const trustStats = trpc.dashboard.trustStats.useQuery(undefined, {
+    refetchOnWindowFocus: false,
+  });
+
   useEffect(() => {
     if (!merchantMe.isLoading && !merchantMe.data) {
       setLocation("/");
@@ -74,6 +78,35 @@ export default function MerchantDashboard() {
       {/* Main Content */}
       <main className="relative z-10 container py-12">
         <div className="max-w-5xl mx-auto">
+          {/* Founder Section */}
+          <div className="text-center mb-10">
+            <h1 className="text-4xl md:text-6xl font-black text-white tracking-tight leading-tight">
+              IBRAHIM WALEED
+            </h1>
+            <p className="mt-2 text-lg md:text-2xl font-bold tracking-wide bg-gradient-to-l from-violet-300 to-purple-400 bg-clip-text text-transparent">
+              المؤسس والمدير التنفيذي - EBOMA
+            </p>
+            <p className="mt-4 max-w-2xl mx-auto text-sm md:text-base text-white/60 leading-relaxed">
+              أول منصة شراكة تجارية بنظام عمولة ونسبة أرباح بالعراق وكوردستان — نمنحك فرصة البيع دون رأس مال، ونتشارك النجاح معك
+            </p>
+
+            {/* Trust Indicators */}
+            <div className="flex items-center justify-center gap-4 mt-8">
+              <div className="rounded-2xl bg-white/[0.03] border border-violet-500/20 px-6 py-4 min-w-[140px]">
+                <p className="text-3xl font-black bg-gradient-to-l from-violet-400 to-purple-400 bg-clip-text text-transparent">
+                  {trustStats.data ? trustStats.data.totalMerchants : "..."}
+                </p>
+                <p className="text-xs text-white/40 mt-1">تاجر مسجّل</p>
+              </div>
+              <div className="rounded-2xl bg-white/[0.03] border border-violet-500/20 px-6 py-4 min-w-[140px]">
+                <p className="text-3xl font-black bg-gradient-to-l from-violet-400 to-purple-400 bg-clip-text text-transparent">
+                  {trustStats.data ? trustStats.data.totalCompletedOrders : "..."}
+                </p>
+                <p className="text-xs text-white/40 mt-1">طلب منجز</p>
+              </div>
+            </div>
+          </div>
+
           {/* Welcome Section */}
           <div className="text-center mb-10">
             <div className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-violet-500/10 border border-violet-500/30 text-violet-300 text-sm mb-4">
