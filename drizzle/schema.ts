@@ -73,6 +73,15 @@ export const physicalProducts = mysqlTable("physical_products", {
   price: int("price").notNull(), // stored in smallest currency unit (e.g. IQD)
   type: varchar("type", { length: 255 }).notNull(),
   description: text("description"),
+  // Admin-only. Never exposed via the public/merchant-facing list query
+  // (db.getAllPhysicalProducts) — only via the admin-only
+  // db.getAllPhysicalProductsAdmin. Edited manually by admin at any time; no
+  // auto-floor at 0 — a negative value is a legitimate "oversold" signal the
+  // admin reconciles themselves. Also adjusted automatically on physical
+  // order status changes (see server/db.ts updatePhysicalOrderStatus).
+  stock: int("stock").default(0).notNull(),
+  imageKey: text("imageKey"), // S3 key, same pattern as digitalSales.proofImageKey
+  imageUrl: text("imageUrl"), // /manus-storage/ path, same pattern as digitalSales.proofImageUrl
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
 });
@@ -108,6 +117,13 @@ export const physicalOrders = mysqlTable("physical_orders", {
   productType: varchar("productType", { length: 255 }).notNull(),
   productPrice: int("productPrice").notNull(),
   quantity: int("quantity").notNull().default(1),
+  // Which catalog physicalProducts row this order was placed for, if the
+  // merchant picked one from the catalog picker (vs the free-text "إدخال
+  // يدوي" path, where this stays NULL). Drives automatic stock adjustment on
+  // status change (server/db.ts updatePhysicalOrderStatus) — NULL means
+  // "never touch stock for this order". No FK (schema has none anywhere); if
+  // the referenced product is later deleted, stock adjustment is skipped.
+  productId: int("productId"),
   totalPrice: int("totalPrice").notNull(),
   province: varchar("province", { length: 255 }).notNull(),
   district: varchar("district", { length: 255 }).notNull(),

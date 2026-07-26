@@ -230,7 +230,7 @@ export async function resetAdminFailedAttempts(id: number): Promise<void> {
 
 // ==================== Physical Products ====================
 
-export async function createPhysicalProduct(data: { name: string; price: number; type: string; description?: string }): Promise<PhysicalProduct> {
+export async function createPhysicalProduct(data: { name: string; price: number; type: string; description?: string; stock?: number; imageKey?: string; imageUrl?: string }): Promise<PhysicalProduct> {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
   await db.insert(physicalProducts).values(data);
@@ -238,13 +238,31 @@ export async function createPhysicalProduct(data: { name: string; price: number;
   return created;
 }
 
-export async function getAllPhysicalProducts(): Promise<PhysicalProduct[]> {
+// Public/merchant-facing — deliberately excludes `stock` at the SELECT level
+// (not just hidden in the UI) so it can never leak through this endpoint.
+export async function getAllPhysicalProducts(): Promise<Array<Pick<PhysicalProduct, "id" | "name" | "price" | "type" | "description" | "imageUrl" | "createdAt" | "updatedAt">>> {
+  const db = await getDb();
+  if (!db) return [];
+  return await db.select({
+    id: physicalProducts.id,
+    name: physicalProducts.name,
+    price: physicalProducts.price,
+    type: physicalProducts.type,
+    description: physicalProducts.description,
+    imageUrl: physicalProducts.imageUrl,
+    createdAt: physicalProducts.createdAt,
+    updatedAt: physicalProducts.updatedAt,
+  }).from(physicalProducts).orderBy(desc(physicalProducts.createdAt));
+}
+
+// Admin-only — full row including stock, for AdminProducts.tsx.
+export async function getAllPhysicalProductsAdmin(): Promise<PhysicalProduct[]> {
   const db = await getDb();
   if (!db) return [];
   return await db.select().from(physicalProducts).orderBy(desc(physicalProducts.createdAt));
 }
 
-export async function updatePhysicalProduct(id: number, data: Partial<{ name: string; price: number; type: string; description?: string }>): Promise<void> {
+export async function updatePhysicalProduct(id: number, data: Partial<{ name: string; price: number; type: string; description?: string; stock: number; imageKey: string; imageUrl: string }>): Promise<void> {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
   await db.update(physicalProducts).set(data).where(eq(physicalProducts.id, id));
@@ -299,6 +317,7 @@ export async function createPhysicalOrder(data: {
   district: string;
   notes?: string;
   commissionAtOrderTime: number;
+  productId?: number;
 }): Promise<PhysicalOrder> {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
@@ -319,10 +338,48 @@ export async function getAllPhysicalOrders(): Promise<PhysicalOrder[]> {
   return await db.select().from(physicalOrders).orderBy(desc(physicalOrders.createdAt));
 }
 
+/**
+ * Updates a physical order's status and, if it's linked to a catalog
+ * product (productId set — i.e. the merchant picked it from the catalog
+ * picker, not the free-text "إدخال يدوي" path), automatically adjusts that
+ * product's stock. Reuses PHYSICAL_TERMINAL_STATUSES (defined below, in the
+ * Settlements section) — delivered/cancelled/returned are exactly the
+ * statuses that are "out of the pipeline" for both settlement eligibility
+ * and stock purposes:
+ *   - non-terminal → terminal (first time):  stock -= quantity
+ *   - terminal → non-terminal (reverted):     stock += quantity
+ *   - terminal → terminal (any combination):  no change (already "out")
+ *   - non-terminal → non-terminal:            no change (never was "out")
+ * Wrapped in a transaction so the status update and stock adjustment can
+ * never desync on partial failure. If the linked product was since deleted,
+ * the stock UPDATE simply matches 0 rows — no error, adjustment silently
+ * skipped, order status still updates normally.
+ */
 export async function updatePhysicalOrderStatus(id: number, status: string): Promise<void> {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
-  await db.update(physicalOrders).set({ status: status as any }).where(eq(physicalOrders.id, id));
+
+  await db.transaction(async (tx) => {
+    const [order] = await tx.select({
+      status: physicalOrders.status,
+      productId: physicalOrders.productId,
+      quantity: physicalOrders.quantity,
+    }).from(physicalOrders).where(eq(physicalOrders.id, id)).limit(1);
+
+    if (!order) throw new Error("الطلب غير موجود");
+
+    const wasOut = (PHYSICAL_TERMINAL_STATUSES as readonly string[]).includes(order.status);
+    const isOut = (PHYSICAL_TERMINAL_STATUSES as readonly string[]).includes(status);
+
+    if (order.productId && wasOut !== isOut) {
+      const delta = isOut ? -order.quantity : order.quantity;
+      await tx.update(physicalProducts)
+        .set({ stock: sql`${physicalProducts.stock} + ${delta}` })
+        .where(eq(physicalProducts.id, order.productId));
+    }
+
+    await tx.update(physicalOrders).set({ status: status as any }).where(eq(physicalOrders.id, id));
+  });
 }
 
 export async function getFilteredPhysicalOrders(filters: {

@@ -29,6 +29,7 @@ vi.mock("./db", () => ({
   getAllDigitalSales: vi.fn(),
   getFilteredDigitalSales: vi.fn(),
   getAllPhysicalProducts: vi.fn(),
+  getAllPhysicalProductsAdmin: vi.fn(),
   createPhysicalProduct: vi.fn(),
   updatePhysicalProduct: vi.fn(),
   deletePhysicalProduct: vi.fn(),
@@ -293,6 +294,28 @@ describe("Physical Orders", () => {
     );
   });
 
+  it("should pass productId through to db.createPhysicalOrder when the merchant picked a catalog product", async () => {
+    vi.mocked(db.createPhysicalOrder).mockResolvedValue({ id: 1 } as any);
+
+    const ctx = createMerchantContext(7);
+    const caller = appRouter.createCaller(ctx);
+    await caller.physicalOrders.create({
+      merchantName: "Test",
+      customerName: "Customer",
+      customerPhone: "07700000000",
+      productType: "Phone",
+      productPrice: 50000,
+      quantity: 2,
+      province: "بغداد",
+      district: "الكرادة",
+      productId: 42,
+    });
+
+    expect(db.createPhysicalOrder).toHaveBeenCalledWith(
+      expect.objectContaining({ productId: 42 })
+    );
+  });
+
   it("should freeze the merchant's CURRENT commission into commissionAtOrderTime on create (commission freeze)", async () => {
     vi.mocked(db.createPhysicalOrder).mockResolvedValue({ id: 1 } as any);
 
@@ -528,6 +551,55 @@ describe("Products Management", () => {
     const result = await caller.physicalProducts.delete({ id: 1 });
 
     expect(result.success).toBe(true);
+  });
+
+  it("should pass stock through to db.createPhysicalProduct on create", async () => {
+    vi.mocked(db.createPhysicalProduct).mockResolvedValue({ id: 1 } as any);
+
+    const ctx = createAdminContext();
+    const caller = appRouter.createCaller(ctx);
+    await caller.physicalProducts.create({
+      name: "Test Product",
+      price: 10000,
+      type: "إلكتروني",
+      stock: 25,
+    });
+
+    expect(db.createPhysicalProduct).toHaveBeenCalledWith(
+      expect.objectContaining({ stock: 25 })
+    );
+  });
+
+  it("should pass stock through to db.updatePhysicalProduct on update", async () => {
+    vi.mocked(db.updatePhysicalProduct).mockResolvedValue(undefined as any);
+
+    const ctx = createAdminContext();
+    const caller = appRouter.createCaller(ctx);
+    await caller.physicalProducts.update({ id: 1, stock: 5 });
+
+    expect(db.updatePhysicalProduct).toHaveBeenCalledWith(
+      1,
+      expect.objectContaining({ stock: 5 })
+    );
+  });
+
+  it("should list physical products with stock as admin (listAdmin)", async () => {
+    vi.mocked(db.getAllPhysicalProductsAdmin).mockResolvedValue([
+      { id: 1, name: "Test", price: 10000, type: "t", description: null, stock: 7, imageKey: null, imageUrl: null, createdAt: new Date(), updatedAt: new Date() },
+    ] as any);
+
+    const ctx = createAdminContext();
+    const caller = appRouter.createCaller(ctx);
+    const result = await caller.physicalProducts.listAdmin();
+
+    expect(result[0].stock).toBe(7);
+  });
+
+  it("should reject physicalProducts.listAdmin for a non-admin caller", async () => {
+    const ctx = createPublicContext();
+    const caller = appRouter.createCaller(ctx);
+
+    await expect(caller.physicalProducts.listAdmin()).rejects.toThrow();
   });
 });
 

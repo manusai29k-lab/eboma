@@ -4,8 +4,9 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { useLocation } from "wouter";
-import { ArrowRight, Package, Loader2, Info } from "lucide-react";
+import { ArrowRight, Package, Loader2, Info, Plus, ImageOff, Pencil, Search } from "lucide-react";
 import { toast } from "sonner";
 import { useState, useEffect } from "react";
 
@@ -31,6 +32,37 @@ export default function MerchantPhysical() {
   const [district, setDistrict] = useState("");
   const [notes, setNotes] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
+
+  // Product entry mode: "picker" = nothing chosen yet (show the catalog
+  // button + manual-entry link), "selected" = a catalog product is locked
+  // in (name display-only, price still editable), "manual" = free-text name
+  // entry (original behavior, productId stays null so stock is never touched).
+  const [entryMode, setEntryMode] = useState<"picker" | "selected" | "manual">("picker");
+  const [selectedProductId, setSelectedProductId] = useState<number | null>(null);
+  const [selectedProductImage, setSelectedProductImage] = useState<string | null>(null);
+  const [showCatalog, setShowCatalog] = useState(false);
+  const [catalogSearch, setCatalogSearch] = useState("");
+
+  const catalogProducts = trpc.physicalProducts.list.useQuery(undefined, { refetchOnWindowFocus: false });
+  const filteredCatalog = (catalogProducts.data ?? []).filter((p) =>
+    p.name.toLowerCase().includes(catalogSearch.trim().toLowerCase())
+  );
+
+  const pickProduct = (product: { id: number; name: string; price: number; imageUrl: string | null }) => {
+    setSelectedProductId(product.id);
+    setSelectedProductImage(product.imageUrl);
+    setProductType(product.name);
+    setProductPrice(String(product.price));
+    setEntryMode("selected");
+    setShowCatalog(false);
+  };
+
+  const clearProductSelection = () => {
+    setSelectedProductId(null);
+    setSelectedProductImage(null);
+    setProductType("");
+    setEntryMode("picker");
+  };
 
   useEffect(() => {
     if (!merchantMe.isLoading && !merchantMe.data) {
@@ -73,6 +105,7 @@ export default function MerchantPhysical() {
       province,
       district,
       notes: notes || undefined,
+      productId: selectedProductId ?? undefined,
     });
   };
 
@@ -124,9 +157,41 @@ export default function MerchantPhysical() {
               </div>
 
               <div className="space-y-2">
-                <Label htmlFor="productType" className="text-white/70 text-sm">نوع المنتج *</Label>
-                <Input id="productType" className={inputClass} placeholder="أدخل اسم المنتج يدوياً" value={productType} onChange={(e) => setProductType(e.target.value)} disabled={isSubmitting} />
-                <p className="text-xs text-white/30">أدخل اسم المنتج يدوياً</p>
+                <Label className="text-white/70 text-sm">المنتج *</Label>
+
+                {entryMode === "selected" ? (
+                  <div className="flex items-center justify-between gap-3 rounded-xl bg-white/5 border border-violet-500/30 p-3">
+                    <div className="flex items-center gap-3">
+                      {selectedProductImage ? (
+                        <img src={selectedProductImage} alt={productType} className="w-10 h-10 rounded-lg object-cover" />
+                      ) : (
+                        <div className="w-10 h-10 rounded-lg bg-white/10 flex items-center justify-center">
+                          <ImageOff className="w-4 h-4 text-white/30" />
+                        </div>
+                      )}
+                      <span className="text-white font-medium">{productType}</span>
+                    </div>
+                    <Button type="button" variant="ghost" size="sm" className="text-white/50 hover:text-white gap-1" onClick={clearProductSelection} disabled={isSubmitting}>
+                      <Pencil className="w-3.5 h-3.5" /> تغيير
+                    </Button>
+                  </div>
+                ) : entryMode === "manual" ? (
+                  <>
+                    <Input id="productType" className={inputClass} placeholder="أدخل اسم المنتج يدوياً" value={productType} onChange={(e) => setProductType(e.target.value)} disabled={isSubmitting} />
+                    <button type="button" className="text-xs text-violet-400 hover:text-violet-300 hover:underline" onClick={() => { setProductType(""); setEntryMode("picker"); }}>
+                      الاختيار من الكتالوج بدلاً من ذلك
+                    </button>
+                  </>
+                ) : (
+                  <div className="flex items-center gap-3">
+                    <Button type="button" variant="outline" className="border-white/10 bg-white/5 text-white hover:bg-white/10 gap-2" onClick={() => setShowCatalog(true)} disabled={isSubmitting}>
+                      <Plus className="w-4 h-4" /> اختر من الكتالوج
+                    </Button>
+                    <button type="button" className="text-xs text-white/40 hover:text-white/60 hover:underline" onClick={() => setEntryMode("manual")}>
+                      أو أدخل يدوياً
+                    </button>
+                  </div>
+                )}
               </div>
 
               <div className="grid grid-cols-2 gap-4">
@@ -178,6 +243,48 @@ export default function MerchantPhysical() {
           </div>
         </div>
       </main>
+
+      {/* Catalog Picker */}
+      <Dialog open={showCatalog} onOpenChange={setShowCatalog}>
+        <DialogContent className="max-w-2xl bg-[#0d1020] border-white/10 text-white max-h-[80vh] overflow-hidden flex flex-col">
+          <DialogHeader>
+            <DialogTitle className="text-white">اختر منتجاً من الكتالوج</DialogTitle>
+          </DialogHeader>
+          <div className="relative mb-2">
+            <Search className="w-4 h-4 text-white/30 absolute start-3 top-1/2 -translate-y-1/2" />
+            <Input
+              placeholder="ابحث عن منتج..."
+              value={catalogSearch}
+              onChange={(e) => setCatalogSearch(e.target.value)}
+              className="bg-white/5 border-white/10 text-white placeholder:text-white/30 ps-9"
+            />
+          </div>
+          <div className="overflow-y-auto grid grid-cols-2 sm:grid-cols-3 gap-3 pb-2">
+            {catalogProducts.isLoading ? (
+              <p className="col-span-full text-center text-white/40 py-8">جاري التحميل...</p>
+            ) : filteredCatalog.length > 0 ? (
+              filteredCatalog.map((product) => (
+                <div key={product.id} className="rounded-xl bg-white/[0.03] border border-white/10 p-3 flex flex-col items-center text-center gap-2">
+                  {product.imageUrl ? (
+                    <img src={product.imageUrl} alt={product.name} className="w-16 h-16 rounded-lg object-cover" />
+                  ) : (
+                    <div className="w-16 h-16 rounded-lg bg-white/10 flex items-center justify-center">
+                      <ImageOff className="w-6 h-6 text-white/30" />
+                    </div>
+                  )}
+                  <p className="text-sm font-medium text-white line-clamp-2">{product.name}</p>
+                  <p className="text-xs text-white/40">{product.price.toLocaleString()} د.ع</p>
+                  <Button type="button" size="sm" variant="outline" className="border-violet-500/30 text-violet-300 hover:bg-violet-500/10 gap-1 w-full" onClick={() => pickProduct(product)}>
+                    <Plus className="w-3.5 h-3.5" /> إضافة
+                  </Button>
+                </div>
+              ))
+            ) : (
+              <p className="col-span-full text-center text-white/40 py-8">لا توجد منتجات مطابقة</p>
+            )}
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

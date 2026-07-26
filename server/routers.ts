@@ -65,6 +65,23 @@ function clearAdminCookie(req: Request, res: any) {
   res.clearCookie(ADMIN_COOKIE_NAME, options);
 }
 
+// Shared by physicalProducts.create/update — same base64-upload pattern as
+// digitalSales.create's proof image (see below), reused here to avoid
+// duplicating the decode/upload try-catch twice.
+async function uploadProductImage(base64?: string, name?: string): Promise<{ imageKey?: string; imageUrl?: string }> {
+  if (!base64 || !name) return {};
+  try {
+    const base64Data = base64.split(",")[1] || base64;
+    const buffer = Buffer.from(base64Data, "base64");
+    const ext = name.split(".").pop() || "jpg";
+    const result = await storagePut(`products/${Date.now()}.${ext}`, buffer, `image/${ext}`);
+    return { imageKey: result.key, imageUrl: result.url };
+  } catch (error) {
+    console.error("[PhysicalProduct] Failed to upload image:", error);
+    return {};
+  }
+}
+
 export const appRouter = router({
   system: systemRouter,
 
@@ -216,6 +233,7 @@ export const appRouter = router({
         province: z.string().min(1).max(255),
         district: z.string().min(1).max(255),
         notes: z.string().optional(),
+        productId: z.number().optional(),
       }))
       .mutation(async ({ input, ctx }) => {
         const totalPrice = input.productPrice * input.quantity;
@@ -345,8 +363,14 @@ export const appRouter = router({
 
   // ==================== Physical Products (Admin) ====================
   physicalProducts: router({
+    // Public/merchant-facing — never includes stock (see db.getAllPhysicalProducts).
     list: publicProcedure.query(async () => {
       return await db.getAllPhysicalProducts();
+    }),
+
+    // Admin-only — full rows including stock, for AdminProducts.tsx.
+    listAdmin: appAdminProcedure.query(async () => {
+      return await db.getAllPhysicalProductsAdmin();
     }),
 
     create: appAdminProcedure
@@ -355,9 +379,14 @@ export const appRouter = router({
         price: z.number().int().min(0),
         type: z.string().min(1).max(255),
         description: z.string().optional(),
+        stock: z.number().int().default(0),
+        imageBase64: z.string().optional(),
+        imageName: z.string().optional(),
       }))
       .mutation(async ({ input }) => {
-        return await db.createPhysicalProduct(input);
+        const { imageBase64, imageName, ...productData } = input;
+        const { imageKey, imageUrl } = await uploadProductImage(imageBase64, imageName);
+        return await db.createPhysicalProduct({ ...productData, imageKey, imageUrl });
       }),
 
     update: appAdminProcedure
@@ -367,10 +396,17 @@ export const appRouter = router({
         price: z.number().int().min(0).optional(),
         type: z.string().min(1).max(255).optional(),
         description: z.string().optional(),
+        stock: z.number().int().optional(),
+        imageBase64: z.string().optional(),
+        imageName: z.string().optional(),
       }))
       .mutation(async ({ input }) => {
-        const { id, ...data } = input;
-        await db.updatePhysicalProduct(id, data);
+        const { id, imageBase64, imageName, ...data } = input;
+        const { imageKey, imageUrl } = await uploadProductImage(imageBase64, imageName);
+        await db.updatePhysicalProduct(id, {
+          ...data,
+          ...(imageKey && imageUrl ? { imageKey, imageUrl } : {}),
+        });
         return { success: true };
       }),
 
