@@ -98,6 +98,40 @@ export async function getUserByOpenId(openId: string) {
 
 // ==================== Merchants ====================
 
+// Enforces the sales_rep->supervisor->leader->manager hierarchy on parentId
+// assignment. Only manager is unrestricted; every other role either rejects
+// certain child roles outright or (supervisor->supervisor) caps the child's
+// own commissionValue at the parent's. Compares commissionValue as a raw
+// number regardless of commissionType (fixed vs percentage) - callers are
+// responsible for that being a meaningful comparison.
+export function validateParentAssignment(
+  childRole: Merchant["role"],
+  childCommissionValue: number,
+  parent: Merchant,
+): void {
+  switch (parent.role) {
+    case "sales_rep":
+      throw new Error("مندوب المبيعات لا يقبل أي تابع");
+
+    case "supervisor":
+      if (childRole === "sales_rep") return;
+      if (childRole === "supervisor") {
+        if (childCommissionValue > parent.commissionValue) {
+          throw new Error("لا يمكن أن تكون عمولة المشرف التابع أعلى من عمولة المشرف الذي يتبع له");
+        }
+        return;
+      }
+      throw new Error("المشرف يقبل فقط مندوبي مبيعات، أو مشرفين آخرين بعمولة لا تتجاوز عمولته");
+
+    case "leader":
+      if (childRole === "supervisor" || childRole === "leader") return;
+      throw new Error("القائد يقبل فقط مشرفين أو قادة آخرين كتابعين");
+
+    case "manager":
+      return; // no restrictions
+  }
+}
+
 export async function createMerchantByAdmin(data: {
   name: string;
   username: string;
@@ -117,6 +151,13 @@ export async function createMerchantByAdmin(data: {
   if (existing.length > 0) {
     throw new Error("اسم المستخدم مسجل بالفعل");
   }
+
+  if (data.parentId != null) {
+    const parent = await getMerchantById(data.parentId);
+    if (!parent) throw new Error("التاجر الذي يُفترض اتباعه غير موجود");
+    validateParentAssignment(data.role, data.commissionValue, parent);
+  }
+
   await db.insert(merchants).values({
     name: data.name,
     username: data.username,
@@ -155,6 +196,12 @@ export async function updateMerchantByAdmin(id: number, data: {
 
   if (data.parentId === id) {
     throw new Error("لا يمكن أن يتبع التاجر لنفسه");
+  }
+
+  if (data.parentId != null) {
+    const parent = await getMerchantById(data.parentId);
+    if (!parent) throw new Error("التاجر الذي يُفترض اتباعه غير موجود");
+    validateParentAssignment(data.role, data.commissionValue, parent);
   }
 
   await db.update(merchants).set({

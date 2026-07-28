@@ -1,16 +1,11 @@
 import { trpc } from "@/lib/trpc";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { RoleBadge } from "@/components/RoleBadge";
+import { ROLE_CONFIG } from "@/lib/merchantRoles";
 import { useLocation } from "wouter";
 import { ArrowRight, Users, TrendingUp, Layers } from "lucide-react";
 import { useEffect } from "react";
-
-const ROLE_LABELS: Record<string, string> = {
-  sales_rep: "مندوب مبيعات",
-  supervisor: "مشرف",
-  leader: "قائد",
-  manager: "مدير",
-};
 
 const STATUS_BADGE: Record<string, { label: string; className: string }> = {
   draft: { label: "مسودة", className: "bg-amber-500/20 text-amber-300 border border-amber-500/30" },
@@ -114,7 +109,7 @@ export default function MerchantTeam() {
             </div>
             <div>
               <h1 className="text-lg font-bold text-white">أرباح الفريق</h1>
-              {role && <p className="text-xs text-white/40">{ROLE_LABELS[role] ?? role}</p>}
+              {role && <div className="mt-0.5"><RoleBadge role={role} /></div>}
             </div>
           </div>
         </div>
@@ -170,7 +165,7 @@ export default function MerchantTeam() {
                   <div key={merchant.id} className="rounded-2xl border border-white/10 p-5">
                     <div className="flex items-center gap-2 mb-3">
                       <span className="font-semibold text-white">{merchant.name}</span>
-                      <Badge className="bg-white/10 text-white/60 border border-white/10">{ROLE_LABELS[merchant.role] ?? merchant.role}</Badge>
+                      <RoleBadge role={merchant.role} />
                     </div>
                     {settlements.length > 0 ? (
                       <div className="space-y-3">

@@ -9,16 +9,11 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from "@/components/ui/dialog";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Users, Trash2, Plus, KeyRound, Copy, RefreshCw, Check, Wallet, Pencil } from "lucide-react";
+import { RoleBadge } from "@/components/RoleBadge";
+import { ROLE_CONFIG } from "@/lib/merchantRoles";
 import { toast } from "sonner";
 import { useLocation } from "wouter";
 import { useState } from "react";
-
-const ROLE_LABELS: Record<string, string> = {
-  sales_rep: "مندوب مبيعات",
-  supervisor: "تاجر مشرف",
-  leader: "تاجر قائد",
-  manager: "مدير التجار",
-};
 
 const NO_PARENT_VALUE = "none";
 
@@ -308,7 +303,7 @@ export default function AdminMerchants() {
                         <TableCell dir="ltr">{merchant.username}</TableCell>
                         {/* الدور */}
                         <TableCell>
-                          <Badge variant="outline">{ROLE_LABELS[merchant.role] ?? merchant.role}</Badge>
+                          <RoleBadge role={merchant.role} />
                         </TableCell>
                         {/* يتبع لـ */}
                         <TableCell className="text-sm text-muted-foreground">
@@ -458,10 +453,18 @@ export default function AdminMerchants() {
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="sales_rep">مندوب مبيعات</SelectItem>
-                  <SelectItem value="supervisor">تاجر مشرف</SelectItem>
-                  <SelectItem value="leader">تاجر قائد</SelectItem>
-                  <SelectItem value="manager">مدير التجار</SelectItem>
+                  {(Object.keys(ROLE_CONFIG) as Array<keyof typeof ROLE_CONFIG>).map((role) => {
+                    const config = ROLE_CONFIG[role];
+                    const Icon = config.icon;
+                    return (
+                      <SelectItem key={role} value={role}>
+                        <span className="flex items-center gap-2">
+                          <Icon className={`w-4 h-4 ${config.colorClass}`} />
+                          {config.label}
+                        </span>
+                      </SelectItem>
+                    );
+                  })}
                 </SelectContent>
               </Select>
             </div>
@@ -474,7 +477,7 @@ export default function AdminMerchants() {
                 <SelectContent>
                   <SelectItem value={NO_PARENT_VALUE}>بدون - على القمة</SelectItem>
                   {merchants.data?.map((m) => (
-                    <SelectItem key={m.id} value={String(m.id)}>{m.name} — {ROLE_LABELS[m.role] ?? m.role}</SelectItem>
+                    <SelectItem key={m.id} value={String(m.id)}>{m.name} — {ROLE_CONFIG[m.role]?.label ?? m.role}</SelectItem>
                   ))}
                 </SelectContent>
               </Select>
@@ -563,10 +566,18 @@ export default function AdminMerchants() {
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="sales_rep">مندوب مبيعات</SelectItem>
-                  <SelectItem value="supervisor">تاجر مشرف</SelectItem>
-                  <SelectItem value="leader">تاجر قائد</SelectItem>
-                  <SelectItem value="manager">مدير التجار</SelectItem>
+                  {(Object.keys(ROLE_CONFIG) as Array<keyof typeof ROLE_CONFIG>).map((role) => {
+                    const config = ROLE_CONFIG[role];
+                    const Icon = config.icon;
+                    return (
+                      <SelectItem key={role} value={role}>
+                        <span className="flex items-center gap-2">
+                          <Icon className={`w-4 h-4 ${config.colorClass}`} />
+                          {config.label}
+                        </span>
+                      </SelectItem>
+                    );
+                  })}
                 </SelectContent>
               </Select>
             </div>
@@ -579,7 +590,7 @@ export default function AdminMerchants() {
                 <SelectContent>
                   <SelectItem value={NO_PARENT_VALUE}>بدون - على القمة</SelectItem>
                   {merchants.data?.filter((m) => m.id !== editMerchantId).map((m) => (
-                    <SelectItem key={m.id} value={String(m.id)}>{m.name} — {ROLE_LABELS[m.role] ?? m.role}</SelectItem>
+                    <SelectItem key={m.id} value={String(m.id)}>{m.name} — {ROLE_CONFIG[m.role]?.label ?? m.role}</SelectItem>
                   ))}
                 </SelectContent>
               </Select>
