@@ -83,10 +83,11 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
   }
 
   const admin = adminMe.data;
+  const sidebarSide = document.documentElement.dir === "rtl" ? "right" : "left";
 
   return (
     <SidebarProvider>
-      <Sidebar collapsible="icon" className="border-r-0">
+      <Sidebar collapsible="icon" side={sidebarSide} className="border-r-0">
         {/* Header */}
         <SidebarHeader className="h-16 justify-center">
           <div className="flex items-center gap-3 px-2">

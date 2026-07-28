@@ -8,10 +8,19 @@ import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from "@/components/ui/dialog";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { Users, Trash2, Plus, KeyRound, Copy, RefreshCw, Check, Wallet } from "lucide-react";
+import { Users, Trash2, Plus, KeyRound, Copy, RefreshCw, Check, Wallet, Pencil } from "lucide-react";
 import { toast } from "sonner";
 import { useLocation } from "wouter";
 import { useState } from "react";
+
+const ROLE_LABELS: Record<string, string> = {
+  sales_rep: "مندوب مبيعات",
+  supervisor: "تاجر مشرف",
+  leader: "تاجر قائد",
+  manager: "مدير التجار",
+};
+
+const NO_PARENT_VALUE = "none";
 
 export default function AdminMerchants() {
   const [, setLocation] = useLocation();
@@ -37,7 +46,11 @@ export default function AdminMerchants() {
       setNewName("");
       setNewUsername("");
       setNewPasscode("");
-      setNewCommission("0");
+      setNewRole("sales_rep");
+      setNewParentId(NO_PARENT_VALUE);
+      setNewCommissionType("fixed");
+      setNewCommissionValue("0");
+      setNewOverridePercentage("0");
     },
     onError: (error: any) => {
       toast.error(error.message || "فشل إنشاء الحساب");
@@ -45,13 +58,18 @@ export default function AdminMerchants() {
     },
   });
 
-  const upgradeLevelMutation = trpc.merchants.upgradeLevel.useMutation({
+  const updateMutation = trpc.merchants.update.useMutation({
     onSuccess: () => {
-      toast.success("تم تحديث مستوى العمولة");
+      toast.success("تم تحديث بيانات التاجر بنجاح");
       merchants.refetch();
       performance.refetch();
+      setShowEditDialog(false);
+      setEditLoading(false);
     },
-    onError: () => toast.error("فشل تحديث المستوى"),
+    onError: (error: any) => {
+      toast.error(error.message || "فشل تحديث البيانات");
+      setEditLoading(false);
+    },
   });
 
   const resetPasswordMutation = trpc.merchants.resetPassword.useMutation({
@@ -91,8 +109,23 @@ export default function AdminMerchants() {
   const [newUsername, setNewUsername] = useState("");
   const [newPasscode, setNewPasscode] = useState("");
   const [newMerchantType, setNewMerchantType] = useState<"physical" | "digital">("physical");
-  const [newCommission, setNewCommission] = useState("0");
-  const [newDigitalLevel, setNewDigitalLevel] = useState<"1" | "2" | "3">("1");
+  const [newRole, setNewRole] = useState<"sales_rep" | "supervisor" | "leader" | "manager">("sales_rep");
+  const [newParentId, setNewParentId] = useState(NO_PARENT_VALUE);
+  const [newCommissionType, setNewCommissionType] = useState<"fixed" | "percentage">("fixed");
+  const [newCommissionValue, setNewCommissionValue] = useState("0");
+  const [newOverridePercentage, setNewOverridePercentage] = useState("0");
+
+  // Edit merchant dialog state
+  const [showEditDialog, setShowEditDialog] = useState(false);
+  const [editLoading, setEditLoading] = useState(false);
+  const [editMerchantId, setEditMerchantId] = useState<number | null>(null);
+  const [editName, setEditName] = useState("");
+  const [editMerchantType, setEditMerchantType] = useState<"physical" | "digital">("physical");
+  const [editRole, setEditRole] = useState<"sales_rep" | "supervisor" | "leader" | "manager">("sales_rep");
+  const [editParentId, setEditParentId] = useState(NO_PARENT_VALUE);
+  const [editCommissionType, setEditCommissionType] = useState<"fixed" | "percentage">("fixed");
+  const [editCommissionValue, setEditCommissionValue] = useState("0");
+  const [editOverridePercentage, setEditOverridePercentage] = useState("0");
 
   // Reset password dialog state
   const [showResetDialog, setShowResetDialog] = useState(false);
@@ -112,6 +145,7 @@ export default function AdminMerchants() {
   const [settleLoading, setSettleLoading] = useState(false);
 
   const perfMap = new Map(performance.data?.map(p => [p.id, p]));
+  const merchantNameMap = new Map(merchants.data?.map(m => [m.id, m.name]));
 
   const handleCreateMerchant = (e: React.FormEvent) => {
     e.preventDefault();
@@ -129,8 +163,42 @@ export default function AdminMerchants() {
       username: newUsername,
       passcode: newPasscode,
       merchantType: newMerchantType,
-      commission: newMerchantType === "physical" ? parseInt(newCommission) || 0 : 0,
-      digitalLevel: newMerchantType === "digital" ? newDigitalLevel : "1",
+      role: newRole,
+      parentId: newParentId === NO_PARENT_VALUE ? null : parseInt(newParentId),
+      commissionType: newCommissionType,
+      commissionValue: parseFloat(newCommissionValue) || 0,
+      overridePercentage: newRole === "manager" ? (parseFloat(newOverridePercentage) || 0) : null,
+    });
+  };
+
+  const openEditDialog = (merchant: NonNullable<typeof merchants.data>[number]) => {
+    setEditMerchantId(merchant.id);
+    setEditName(merchant.name);
+    setEditMerchantType(merchant.merchantType);
+    setEditRole(merchant.role);
+    setEditParentId(merchant.parentId != null ? String(merchant.parentId) : NO_PARENT_VALUE);
+    setEditCommissionType(merchant.commissionType);
+    setEditCommissionValue(String(merchant.commissionValue ?? 0));
+    setEditOverridePercentage(String(merchant.overridePercentage ?? 0));
+    setShowEditDialog(true);
+  };
+
+  const handleUpdateMerchant = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editMerchantId || !editName) {
+      toast.error("يرجى ملء جميع الحقول");
+      return;
+    }
+    setEditLoading(true);
+    updateMutation.mutate({
+      id: editMerchantId,
+      name: editName,
+      merchantType: editMerchantType,
+      role: editRole,
+      parentId: editParentId === NO_PARENT_VALUE ? null : parseInt(editParentId),
+      commissionType: editCommissionType,
+      commissionValue: parseFloat(editCommissionValue) || 0,
+      overridePercentage: editRole === "manager" ? (parseFloat(editOverridePercentage) || 0) : null,
     });
   };
 
@@ -217,9 +285,10 @@ export default function AdminMerchants() {
                   <TableRow>
                     <TableHead>الاسم</TableHead>
                     <TableHead>اسم المستخدم</TableHead>
+                    <TableHead>الدور</TableHead>
+                    <TableHead>يتبع لـ</TableHead>
                     <TableHead>النوع</TableHead>
                     <TableHead>العمولة</TableHead>
-                    <TableHead>المستوى</TableHead>
                     <TableHead>طلبات مادية</TableHead>
                     <TableHead>مبيعات رقمية</TableHead>
                     <TableHead>إجمالي المبيعات</TableHead>
@@ -237,32 +306,25 @@ export default function AdminMerchants() {
                       <TableRow key={merchant.id}>
                         <TableCell className="font-medium">{merchant.name}</TableCell>
                         <TableCell dir="ltr">{merchant.username}</TableCell>
+                        {/* الدور */}
+                        <TableCell>
+                          <Badge variant="outline">{ROLE_LABELS[merchant.role] ?? merchant.role}</Badge>
+                        </TableCell>
+                        {/* يتبع لـ */}
+                        <TableCell className="text-sm text-muted-foreground">
+                          {merchant.parentId != null ? (merchantNameMap.get(merchant.parentId) ?? "—") : "—"}
+                        </TableCell>
+                        {/* النوع */}
                         <TableCell>
                           <Badge variant={merchant.merchantType === "physical" ? "default" : "secondary"}>
                             {merchant.merchantType === "physical" ? "مادي" : "رقمي"}
                           </Badge>
                         </TableCell>
+                        {/* العمولة - عمود موحّد واحد لكل من المادي والرقمي */}
                         <TableCell>
-                          {merchant.merchantType === "physical"
-                            ? `${merchant.commission.toLocaleString()} د.ع/طلب`
-                            : "—"}
-                        </TableCell>
-                        <TableCell>
-                          {merchant.merchantType === "digital" ? (
-                            <Select
-                              value={merchant.digitalLevel ?? "1"}
-                              onValueChange={(val) => upgradeLevelMutation.mutate({ id: merchant.id, level: val as "1" | "2" | "3" })}
-                            >
-                              <SelectTrigger className="w-24 h-8 text-xs">
-                                <SelectValue />
-                              </SelectTrigger>
-                              <SelectContent>
-                                <SelectItem value="1">30%</SelectItem>
-                                <SelectItem value="2">40%</SelectItem>
-                                <SelectItem value="3">50%</SelectItem>
-                              </SelectContent>
-                            </Select>
-                          ) : "—"}
+                          {merchant.commissionType === "fixed"
+                            ? `${merchant.commissionValue.toLocaleString()} د.ع (ثابت)`
+                            : `${merchant.commissionValue}% (نسبة)`}
                         </TableCell>
                         <TableCell>{perf?.physicalOrders ?? 0}</TableCell>
                         <TableCell>{perf?.digitalSales ?? 0}</TableCell>
@@ -295,6 +357,14 @@ export default function AdminMerchants() {
                                 <Wallet className="w-4 h-4 text-teal-600" />
                               </Button>
                             )}
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              title="تعديل"
+                              onClick={() => openEditDialog(merchant)}
+                            >
+                              <Pencil className="w-4 h-4 text-primary" />
+                            </Button>
                             <Button
                               variant="ghost"
                               size="icon"
@@ -381,33 +451,67 @@ export default function AdminMerchants() {
                 </SelectContent>
               </Select>
             </div>
-            {newMerchantType === "physical" && (
+            <div className="space-y-2 pt-2 border-t">
+              <Label htmlFor="new-role">الدور</Label>
+              <Select value={newRole} onValueChange={(val) => setNewRole(val as typeof newRole)}>
+                <SelectTrigger id="new-role">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="sales_rep">مندوب مبيعات</SelectItem>
+                  <SelectItem value="supervisor">تاجر مشرف</SelectItem>
+                  <SelectItem value="leader">تاجر قائد</SelectItem>
+                  <SelectItem value="manager">مدير التجار</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="new-parent">يتبع لـ (اختياري)</Label>
+              <Select value={newParentId} onValueChange={setNewParentId}>
+                <SelectTrigger id="new-parent">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value={NO_PARENT_VALUE}>بدون - على القمة</SelectItem>
+                  {merchants.data?.map((m) => (
+                    <SelectItem key={m.id} value={String(m.id)}>{m.name} — {ROLE_LABELS[m.role] ?? m.role}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="new-commission-type">نوع العمولة</Label>
+              <Select value={newCommissionType} onValueChange={(val) => setNewCommissionType(val as "fixed" | "percentage")}>
+                <SelectTrigger id="new-commission-type">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="fixed">ثابت</SelectItem>
+                  <SelectItem value="percentage">نسبة</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="new-commission-value">
+                {newCommissionType === "fixed" ? "مبلغ ثابت (د.ع)" : "نسبة مئوية من صافي الربح (%)"}
+              </Label>
+              <Input
+                id="new-commission-value"
+                type="number"
+                value={newCommissionValue}
+                onChange={(e) => setNewCommissionValue(e.target.value)}
+              />
+            </div>
+            {newRole === "manager" && (
               <div className="space-y-2">
-                <Label htmlFor="new-commission">العمولة الثابتة لكل طلب (بالدينار العراقي)</Label>
+                <Label htmlFor="new-override">نسبة الحصة الإضافية (%)</Label>
                 <Input
-                  id="new-commission"
+                  id="new-override"
                   type="number"
-                  placeholder="مثال: 1000"
-                  value={newCommission}
-                  onChange={(e) => setNewCommission(e.target.value)}
+                  value={newOverridePercentage}
+                  onChange={(e) => setNewOverridePercentage(e.target.value)}
                 />
-                <p className="text-xs text-muted-foreground">يتم خصم هذا المبلغ الثابت من كل طلب تم تسليمه كعمولة للتاجر</p>
-              </div>
-            )}
-            {newMerchantType === "digital" && (
-              <div className="space-y-2">
-                <Label htmlFor="new-level">مستوى العمولة</Label>
-                <Select value={newDigitalLevel} onValueChange={(val) => setNewDigitalLevel(val as "1" | "2" | "3")}>
-                  <SelectTrigger id="new-level">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="1">المستوى 1 - 30%</SelectItem>
-                    <SelectItem value="2">المستوى 2 - 40%</SelectItem>
-                    <SelectItem value="3">المستوى 3 - 50%</SelectItem>
-                  </SelectContent>
-                </Select>
-                <p className="text-xs text-muted-foreground">نسبة العمولة من إجمالي المبيعات الرقمية المسلمة</p>
+                <p className="text-xs text-muted-foreground">نسبة إضافية من صافي ربح كل من تحته بالهيكل الهرمي</p>
               </div>
             )}
             <DialogFooter>
@@ -416,6 +520,111 @@ export default function AdminMerchants() {
               </Button>
               <Button type="submit" disabled={createLoading}>
                 {createLoading ? "جاري الإنشاء..." : "إنشاء الحساب"}
+              </Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
+
+      {/* Edit Merchant Dialog */}
+      <Dialog open={showEditDialog} onOpenChange={setShowEditDialog}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>تعديل بيانات التاجر</DialogTitle>
+            <DialogDescription>
+              اسم المستخدم غير قابل للتعديل هنا. لتغيير كلمة السر استخدم زر إعادة التعيين.
+            </DialogDescription>
+          </DialogHeader>
+          <form onSubmit={handleUpdateMerchant} className="space-y-4">
+            <div className="space-y-2">
+              <Label htmlFor="edit-name">اسم التاجر</Label>
+              <Input
+                id="edit-name"
+                value={editName}
+                onChange={(e) => setEditName(e.target.value)}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="edit-type">نوع التجارة</Label>
+              <Select value={editMerchantType} onValueChange={(val) => setEditMerchantType(val as "physical" | "digital")}>
+                <SelectTrigger id="edit-type">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="physical">تجارة مادية</SelectItem>
+                  <SelectItem value="digital">تجارة رقمية</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-2 pt-2 border-t">
+              <Label htmlFor="edit-role">الدور</Label>
+              <Select value={editRole} onValueChange={(val) => setEditRole(val as typeof editRole)}>
+                <SelectTrigger id="edit-role">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="sales_rep">مندوب مبيعات</SelectItem>
+                  <SelectItem value="supervisor">تاجر مشرف</SelectItem>
+                  <SelectItem value="leader">تاجر قائد</SelectItem>
+                  <SelectItem value="manager">مدير التجار</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="edit-parent">يتبع لـ (اختياري)</Label>
+              <Select value={editParentId} onValueChange={setEditParentId}>
+                <SelectTrigger id="edit-parent">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value={NO_PARENT_VALUE}>بدون - على القمة</SelectItem>
+                  {merchants.data?.filter((m) => m.id !== editMerchantId).map((m) => (
+                    <SelectItem key={m.id} value={String(m.id)}>{m.name} — {ROLE_LABELS[m.role] ?? m.role}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="edit-commission-type">نوع العمولة</Label>
+              <Select value={editCommissionType} onValueChange={(val) => setEditCommissionType(val as "fixed" | "percentage")}>
+                <SelectTrigger id="edit-commission-type">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="fixed">ثابت</SelectItem>
+                  <SelectItem value="percentage">نسبة</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="edit-commission-value">
+                {editCommissionType === "fixed" ? "مبلغ ثابت (د.ع)" : "نسبة مئوية من صافي الربح (%)"}
+              </Label>
+              <Input
+                id="edit-commission-value"
+                type="number"
+                value={editCommissionValue}
+                onChange={(e) => setEditCommissionValue(e.target.value)}
+              />
+            </div>
+            {editRole === "manager" && (
+              <div className="space-y-2">
+                <Label htmlFor="edit-override">نسبة الحصة الإضافية (%)</Label>
+                <Input
+                  id="edit-override"
+                  type="number"
+                  value={editOverridePercentage}
+                  onChange={(e) => setEditOverridePercentage(e.target.value)}
+                />
+                <p className="text-xs text-muted-foreground">نسبة إضافية من صافي ربح كل من تحته بالهيكل الهرمي</p>
+              </div>
+            )}
+            <DialogFooter>
+              <Button type="button" variant="outline" onClick={() => setShowEditDialog(false)}>
+                إلغاء
+              </Button>
+              <Button type="submit" disabled={editLoading}>
+                {editLoading ? "جاري الحفظ..." : "حفظ التعديلات"}
               </Button>
             </DialogFooter>
           </form>

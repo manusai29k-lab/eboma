@@ -2,8 +2,14 @@ import { describe, expect, it, vi, beforeEach } from "vitest";
 import { appRouter } from "./routers";
 import type { TrpcContext } from "./_core/context";
 
-// Mock db module with updated function names
-vi.mock("./db", () => ({
+// Mock db module with updated function names. Spreads the real module first
+// so pure helpers (computeFrozenCommission, digitalLevelToPercent,
+// resolveDigitalCommission) keep their actual implementation - router logic
+// calls these directly and needs a real computation, not a mock stub.
+vi.mock("./db", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./db")>();
+  return {
+  ...actual,
   getMerchantByUsername: vi.fn(),
   getMerchantById: vi.fn(),
   createMerchantByAdmin: vi.fn(),
@@ -12,7 +18,6 @@ vi.mock("./db", () => ({
   getMerchantPerformance: vi.fn(),
   deleteMerchant: vi.fn(),
   updateMerchantPasscode: vi.fn(),
-  updateMerchantLevel: vi.fn(),
   incrementFailedAttempts: vi.fn(),
   resetFailedAttempts: vi.fn(),
   getAdminByUsername: vi.fn(),
@@ -43,7 +48,8 @@ vi.mock("./db", () => ({
   createSettlement: vi.fn(),
   getSettlementsByMerchant: vi.fn(),
   getFilteredSettlements: vi.fn(),
-}));
+  };
+});
 
 // Mock notification
 vi.mock("./_core/notification", () => ({
@@ -104,7 +110,11 @@ function createAdminContext(): TrpcContext {
 // Logged-in merchant session, gates every `merchantProcedure` route.
 function createMerchantContext(
   merchantId = 1,
-  overrides: Partial<{ commission: number; digitalLevel: "1" | "2" | "3"; merchantType: "physical" | "digital" }> = {}
+  overrides: Partial<{
+    merchantType: "physical" | "digital";
+    commissionType: "fixed" | "percentage";
+    commissionValue: number;
+  }> = {}
 ): TrpcContext {
   return {
     user: null,
@@ -115,8 +125,13 @@ function createMerchantContext(
       username: "testuser",
       passcode: "1234",
       merchantType: overrides.merchantType ?? "physical",
-      commission: overrides.commission ?? 1000,
-      digitalLevel: overrides.digitalLevel ?? "1",
+      commission: 1000,
+      digitalLevel: "1",
+      role: "sales_rep",
+      parentId: null,
+      commissionType: overrides.commissionType ?? "fixed",
+      commissionValue: overrides.commissionValue ?? 1000,
+      overridePercentage: null,
       failedAttempts: 0,
       lockedUntil: null,
       createdAt: new Date(),
@@ -319,8 +334,8 @@ describe("Physical Orders", () => {
   it("should freeze the merchant's CURRENT commission into commissionAtOrderTime on create (commission freeze)", async () => {
     vi.mocked(db.createPhysicalOrder).mockResolvedValue({ id: 1 } as any);
 
-    // Merchant's commission is 1000 at the moment this order is created.
-    const ctx = createMerchantContext(7, { commission: 1000 });
+    // Merchant's commission is 1000 (fixed) at the moment this order is created.
+    const ctx = createMerchantContext(7, { commissionType: "fixed", commissionValue: 1000 });
     const caller = appRouter.createCaller(ctx);
     await caller.physicalOrders.create({
       merchantName: "Test",
@@ -341,7 +356,7 @@ describe("Physical Orders", () => {
     // NEW value — it must never touch the earlier order's already-stored 1000.
     vi.clearAllMocks();
     vi.mocked(db.createPhysicalOrder).mockResolvedValue({ id: 2 } as any);
-    const upgradedCtx = createMerchantContext(7, { commission: 2000 });
+    const upgradedCtx = createMerchantContext(7, { commissionType: "fixed", commissionValue: 2000 });
     const upgradedCaller = appRouter.createCaller(upgradedCtx);
     await upgradedCaller.physicalOrders.create({
       merchantName: "Test",
@@ -431,7 +446,7 @@ describe("Digital Sales", () => {
       createdAt: new Date(), updatedAt: new Date(),
     } as any);
 
-    const ctx = createMerchantContext(7);
+    const ctx = createMerchantContext(7, { merchantType: "digital" });
     const caller = appRouter.createCaller(ctx);
     const result = await caller.digitalSales.create({
       merchantName: "Test",
@@ -448,11 +463,45 @@ describe("Digital Sales", () => {
     );
   });
 
-  it("should freeze the merchant's CURRENT digitalLevel into digitalLevelAtSaleTime on create (commission freeze)", async () => {
+  it("should reject digitalSales.create for a physical-only merchant account", async () => {
+    const ctx = createMerchantContext(7, { merchantType: "physical" });
+    const caller = appRouter.createCaller(ctx);
+
+    await expect(
+      caller.digitalSales.create({
+        merchantName: "Test",
+        customerPhone: "07700000000",
+        productType: "Course",
+        productPrice: 25000,
+        proofImageBase64: "data:image/png;base64,AAAA",
+        proofImageName: "proof.png",
+      })
+    ).rejects.toThrow("هذا الحساب مخصص للمبيعات الرقمية فقط");
+  });
+
+  it("should reject physicalOrders.create for a digital-only merchant account", async () => {
+    const ctx = createMerchantContext(7, { merchantType: "digital" });
+    const caller = appRouter.createCaller(ctx);
+
+    await expect(
+      caller.physicalOrders.create({
+        merchantName: "Test",
+        customerName: "Customer",
+        customerPhone: "07700000000",
+        productType: "Phone",
+        productPrice: 50000,
+        quantity: 1,
+        province: "بغداد",
+        district: "الكرادة",
+      })
+    ).rejects.toThrow("هذا الحساب مخصص للمبيعات المادية فقط");
+  });
+
+  it("should freeze the merchant's CURRENT commission into commissionAtSaleTime on create (commission freeze)", async () => {
     vi.mocked(db.createDigitalSale).mockResolvedValue({ id: 1 } as any);
 
-    // Merchant is at level "1" (30%) at the moment this sale is created.
-    const ctx = createMerchantContext(7, { merchantType: "digital", digitalLevel: "1" });
+    // Merchant's commission is 30% of productPrice at the moment this sale is created.
+    const ctx = createMerchantContext(7, { merchantType: "digital", commissionType: "percentage", commissionValue: 30 });
     const caller = appRouter.createCaller(ctx);
     await caller.digitalSales.create({
       merchantName: "Test",
@@ -464,14 +513,14 @@ describe("Digital Sales", () => {
     });
 
     expect(db.createDigitalSale).toHaveBeenCalledWith(
-      expect.objectContaining({ digitalLevelAtSaleTime: "1" })
+      expect.objectContaining({ commissionAtSaleTime: 7500 }) // 25000 * 0.3
     );
 
-    // Merchant is upgraded to level "2" (40%). A new sale must freeze the NEW
-    // level — it must never touch the earlier sale's already-stored "1".
+    // Merchant is upgraded to 40%. A new sale must freeze the NEW value — it
+    // must never touch the earlier sale's already-stored amount.
     vi.clearAllMocks();
     vi.mocked(db.createDigitalSale).mockResolvedValue({ id: 2 } as any);
-    const upgradedCtx = createMerchantContext(7, { merchantType: "digital", digitalLevel: "2" });
+    const upgradedCtx = createMerchantContext(7, { merchantType: "digital", commissionType: "percentage", commissionValue: 40 });
     const upgradedCaller = appRouter.createCaller(upgradedCtx);
     await upgradedCaller.digitalSales.create({
       merchantName: "Test",
@@ -483,7 +532,7 @@ describe("Digital Sales", () => {
     });
 
     expect(db.createDigitalSale).toHaveBeenCalledWith(
-      expect.objectContaining({ digitalLevelAtSaleTime: "2" })
+      expect.objectContaining({ commissionAtSaleTime: 10000 }) // 25000 * 0.4
     );
   });
 

@@ -9,6 +9,7 @@ import {
   PhysicalOrder, physicalOrders,
   DigitalSale, digitalSales,
   Settlement, settlements,
+  ProfitSettlement, profitSettlements,
 } from "../drizzle/schema";
 import { ENV } from './_core/env';
 
@@ -104,6 +105,11 @@ export async function createMerchantByAdmin(data: {
   merchantType: "physical" | "digital";
   commission: number; // fixed IQD per order for physical merchants
   digitalLevel: "1" | "2" | "3"; // commission level for digital merchants
+  role: Merchant["role"];
+  parentId: number | null;
+  commissionType: Merchant["commissionType"];
+  commissionValue: number;
+  overridePercentage: number | null; // manager role only, see updateMerchantByAdmin
 }): Promise<Merchant> {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
@@ -118,9 +124,50 @@ export async function createMerchantByAdmin(data: {
     merchantType: data.merchantType,
     commission: data.commission,
     digitalLevel: data.digitalLevel,
+    role: data.role,
+    parentId: data.parentId,
+    commissionType: data.commissionType,
+    commissionValue: data.commissionValue,
+    // overridePercentage only means anything for a manager - never persisted
+    // for other roles, same rule enforced in updateMerchantByAdmin below.
+    overridePercentage: data.role === "manager" ? data.overridePercentage : null,
   });
   const [created] = await db.select().from(merchants).where(eq(merchants.username, data.username)).limit(1);
   return created;
+}
+
+// Admin edits an existing merchant's profile + hierarchy/commission settings.
+// Username/passcode are intentionally excluded - they have their own
+// dedicated flows (login identity, resetPassword) and aren't part of this form.
+export async function updateMerchantByAdmin(id: number, data: {
+  name: string;
+  merchantType: "physical" | "digital";
+  commission: number;
+  digitalLevel: "1" | "2" | "3";
+  role: Merchant["role"];
+  parentId: number | null;
+  commissionType: Merchant["commissionType"];
+  commissionValue: number;
+  overridePercentage: number | null;
+}): Promise<void> {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+
+  if (data.parentId === id) {
+    throw new Error("لا يمكن أن يتبع التاجر لنفسه");
+  }
+
+  await db.update(merchants).set({
+    name: data.name,
+    merchantType: data.merchantType,
+    commission: data.commission,
+    digitalLevel: data.digitalLevel,
+    role: data.role,
+    parentId: data.parentId,
+    commissionType: data.commissionType,
+    commissionValue: data.commissionValue,
+    overridePercentage: data.role === "manager" ? data.overridePercentage : null,
+  }).where(eq(merchants.id, id));
 }
 
 export async function getMerchantByUsername(username: string): Promise<Merchant | undefined> {
@@ -148,12 +195,6 @@ export async function resetFailedAttempts(id: number): Promise<void> {
   const db = await getDb();
   if (!db) return;
   await db.update(merchants).set({ failedAttempts: 0, lockedUntil: null }).where(eq(merchants.id, id));
-}
-
-export async function updateMerchantLevel(id: number, level: "1" | "2" | "3"): Promise<void> {
-  const db = await getDb();
-  if (!db) throw new Error("Database not available");
-  await db.update(merchants).set({ digitalLevel: level }).where(eq(merchants.id, id));
 }
 
 export async function updateMerchantPasscode(id: number, newPasscode: string): Promise<void> {
@@ -316,6 +357,8 @@ export async function createPhysicalOrder(data: {
   province: string;
   district: string;
   notes?: string;
+  // Absolute IQD amount, frozen via computeFrozenCommission from the
+  // merchant's commissionType/commissionValue at the moment of creation.
   commissionAtOrderTime: number;
   productId?: number;
 }): Promise<PhysicalOrder> {
@@ -413,7 +456,11 @@ export async function createDigitalSale(data: {
   productPrice: number;
   proofImageKey?: string;
   proofImageUrl?: string;
-  digitalLevelAtSaleTime: "1" | "2" | "3";
+  // Absolute IQD amount, frozen via computeFrozenCommission from the
+  // merchant's commissionType/commissionValue - the sole source for every
+  // row created going forward. digitalLevelAtSaleTime is intentionally NOT
+  // accepted here anymore (falls to its DB default) - see schema.ts comment.
+  commissionAtSaleTime: number;
 }): Promise<DigitalSale> {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
@@ -512,6 +559,7 @@ export async function getUnsettledBalanceForMerchant(merchant: Merchant): Promis
     status: digitalSales.status,
     productPrice: digitalSales.productPrice,
     digitalLevelAtSaleTime: digitalSales.digitalLevelAtSaleTime,
+    commissionAtSaleTime: digitalSales.commissionAtSaleTime,
     createdAt: digitalSales.createdAt,
   }).from(digitalSales).where(and(
     eq(digitalSales.merchantId, merchant.id),
@@ -522,13 +570,13 @@ export async function getUnsettledBalanceForMerchant(merchant: Merchant): Promis
   const delivered = rows.filter(r => r.status === "delivered");
   const cancelled = rows.filter(r => r.status !== "delivered");
   return {
-    amount: delivered.reduce((acc, r) => acc + Math.floor(r.productPrice * digitalLevelToPercent(r.digitalLevelAtSaleTime)), 0),
+    amount: delivered.reduce((acc, r) => acc + resolveDigitalCommission(r), 0),
     deliveredCount: delivered.length,
     cancelledCount: cancelled.length,
     deliveredRows: delivered.map(r => ({
       id: r.id,
       productType: r.productType,
-      amount: Math.floor(r.productPrice * digitalLevelToPercent(r.digitalLevelAtSaleTime)),
+      amount: resolveDigitalCommission(r),
       createdAt: r.createdAt,
     })),
   };
@@ -594,6 +642,7 @@ export async function createSettlement(merchant: Merchant, note?: string): Promi
       status: digitalSales.status,
       productPrice: digitalSales.productPrice,
       digitalLevelAtSaleTime: digitalSales.digitalLevelAtSaleTime,
+      commissionAtSaleTime: digitalSales.commissionAtSaleTime,
     }).from(digitalSales).where(and(
       eq(digitalSales.merchantId, merchant.id),
       isNull(digitalSales.settlementId),
@@ -606,7 +655,7 @@ export async function createSettlement(merchant: Merchant, note?: string): Promi
 
     const delivered = rows.filter(r => r.status === "delivered");
     const cancelled = rows.filter(r => r.status !== "delivered");
-    const amount = delivered.reduce((acc, r) => acc + Math.floor(r.productPrice * digitalLevelToPercent(r.digitalLevelAtSaleTime)), 0);
+    const amount = delivered.reduce((acc, r) => acc + resolveDigitalCommission(r), 0);
 
     await tx.insert(settlements).values({
       merchantId: merchant.id,
@@ -654,13 +703,291 @@ export async function getFilteredSettlements(filters: {
   return await db.select().from(settlements).where(and(...conditions)).orderBy(desc(settlements.createdAt));
 }
 
+// ==================== Profit Settlements (hierarchy commission system) ====================
+// sales_rep -> supervisor -> leader -> manager, via merchants.parentId.
+// Only sales_rep (merchantShare) and the nearest manager ancestor
+// (managerOverrideShare) take a cut of a profitSettlements row's netProfit;
+// supervisor/leader are org-only levels with no share of their own here.
+
+function round2(value: number): number {
+  return Math.round(value * 100) / 100;
+}
+
+export interface ProfitShareBreakdown {
+  netProfit: number;
+  merchantShare: number;
+  managerOverrideShare: number | null;
+  companyShare: number;
+}
+
+// Pure calculation, no DB access - safe to unit test directly.
+export function calculateProfitShares(input: {
+  grossProfit: number;
+  promotionCost: number;
+  commissionType: "fixed" | "percentage";
+  commissionValue: number;
+  managerOverridePercentage: number | null;
+}): ProfitShareBreakdown {
+  // The company absorbs any loss from promotion cost exceeding gross profit -
+  // netProfit is never negative, and the merchant never carries a loss.
+  const netProfit = round2(Math.max(0, input.grossProfit - input.promotionCost));
+
+  const rawMerchantShare = input.commissionType === "fixed"
+    ? input.commissionValue
+    : netProfit * (input.commissionValue / 100);
+  // A fixed commissionValue must never exceed the netProfit actually
+  // available (e.g. promotion cost ate most of the profit) - capped so
+  // companyShare below can't go negative from this term.
+  const merchantShare = round2(Math.min(rawMerchantShare, netProfit));
+
+  const managerOverrideShare = input.managerOverridePercentage != null
+    ? round2(netProfit * (input.managerOverridePercentage / 100))
+    : null;
+
+  const companyShare = round2(netProfit - merchantShare - (managerOverrideShare ?? 0));
+
+  return { netProfit, merchantShare, managerOverrideShare, companyShare };
+}
+
+// Walks merchants.parentId upward from (but not including) startMerchantId
+// looking for the nearest ancestor with role "manager" - a manager's own
+// sales never get overridden by themselves, only their descendants' do.
+// Cycle-guarded (parentId has no DB-level FK, so a bad edit could loop).
+export async function findNearestManagerAncestor(startMerchantId: number): Promise<Merchant | undefined> {
+  const visited = new Set<number>([startMerchantId]);
+  let current = await getMerchantById(startMerchantId);
+
+  while (current?.parentId != null) {
+    if (visited.has(current.parentId)) return undefined; // cycle
+    visited.add(current.parentId);
+
+    const parent = await getMerchantById(current.parentId);
+    if (!parent) return undefined;
+    if (parent.role === "manager") return parent;
+
+    current = parent;
+  }
+
+  return undefined;
+}
+
+// Orchestrates the two steps above for a given merchant's profit event.
+export async function computeProfitShares(
+  merchantId: number,
+  grossProfit: number,
+  promotionCost: number,
+): Promise<ProfitShareBreakdown> {
+  const merchant = await getMerchantById(merchantId);
+  if (!merchant) throw new Error("التاجر غير موجود");
+
+  const manager = await findNearestManagerAncestor(merchantId);
+
+  return calculateProfitShares({
+    grossProfit,
+    promotionCost,
+    commissionType: merchant.commissionType,
+    commissionValue: merchant.commissionValue,
+    managerOverridePercentage: manager?.overridePercentage ?? null,
+  });
+}
+
+// Computes shares via computeProfitShares and persists the row - always
+// created as "draft" (see profitSettlements.status), never "confirmed"
+// directly.
+export async function createProfitSettlement(input: {
+  merchantId: number;
+  productId?: number;
+  periodStart: Date;
+  periodEnd: Date;
+  grossProfit: number;
+  promotionCost: number;
+  promotionProofUrl?: string;
+}): Promise<ProfitSettlement> {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+
+  const shares = await computeProfitShares(input.merchantId, input.grossProfit, input.promotionCost);
+
+  await db.insert(profitSettlements).values({
+    merchantId: input.merchantId,
+    productId: input.productId,
+    periodStart: input.periodStart,
+    periodEnd: input.periodEnd,
+    grossProfit: input.grossProfit.toFixed(2),
+    promotionCost: input.promotionCost.toFixed(2),
+    promotionProofUrl: input.promotionProofUrl,
+    netProfit: shares.netProfit.toFixed(2),
+    merchantShare: shares.merchantShare.toFixed(2),
+    managerOverrideShare: shares.managerOverrideShare != null ? shares.managerOverrideShare.toFixed(2) : null,
+    companyShare: shares.companyShare.toFixed(2),
+  });
+
+  const [created] = await db.select().from(profitSettlements).orderBy(desc(profitSettlements.id)).limit(1);
+  return created;
+}
+
+export async function getFilteredProfitSettlements(filters: {
+  merchantId?: number;
+  status?: "draft" | "confirmed";
+}): Promise<ProfitSettlement[]> {
+  const db = await getDb();
+  if (!db) return [];
+  const conditions = [];
+  if (filters.merchantId) conditions.push(eq(profitSettlements.merchantId, filters.merchantId));
+  if (filters.status) conditions.push(eq(profitSettlements.status, filters.status));
+  if (conditions.length === 0) {
+    return await db.select().from(profitSettlements).orderBy(desc(profitSettlements.createdAt));
+  }
+  return await db.select().from(profitSettlements).where(and(...conditions)).orderBy(desc(profitSettlements.createdAt));
+}
+
+export async function confirmProfitSettlement(id: number): Promise<void> {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.update(profitSettlements).set({ status: "confirmed" }).where(eq(profitSettlements.id, id));
+}
+
+export async function getProfitSettlementsByMerchant(merchantId: number): Promise<ProfitSettlement[]> {
+  const db = await getDb();
+  if (!db) return [];
+  return await db.select().from(profitSettlements)
+    .where(eq(profitSettlements.merchantId, merchantId))
+    .orderBy(desc(profitSettlements.createdAt));
+}
+
+export type MaskedProfitSettlement = Omit<ProfitSettlement, "grossProfit" | "promotionCost"> & {
+  grossProfit: string | null;
+  promotionCost: string | null;
+};
+
+// grossProfit/promotionCost are admin-entered and only meaningful to the
+// sales_rep who generated them - everyone above (supervisor/leader/manager)
+// only ever sees the computed shares, never the raw inputs.
+export function maskProfitSettlementForRole(
+  row: ProfitSettlement,
+  viewerRole: Merchant["role"],
+): MaskedProfitSettlement {
+  if (viewerRole === "sales_rep") return row;
+  return { ...row, grossProfit: null, promotionCost: null };
+}
+
+// Direct children only (one level down): supervisor -> their sales_reps,
+// leader -> their supervisors. Not recursive - see getAllDescendantMerchantIds
+// for the manager's full-tree view.
+export async function getDirectSubordinates(merchantId: number): Promise<Merchant[]> {
+  const db = await getDb();
+  if (!db) return [];
+  return await db.select().from(merchants).where(eq(merchants.parentId, merchantId));
+}
+
+export async function getDirectSubordinatesWithSettlements(merchantId: number): Promise<Array<{
+  merchant: Merchant;
+  settlements: ProfitSettlement[];
+}>> {
+  const subs = await getDirectSubordinates(merchantId);
+  const result = [];
+  for (const sub of subs) {
+    result.push({ merchant: sub, settlements: await getProfitSettlementsByMerchant(sub.id) });
+  }
+  return result;
+}
+
+// Recursive walk down parentId from merchantId (exclusive) - the manager's
+// entire org tree, for subordinatesSummary. No DB-level FK on parentId (see
+// findNearestManagerAncestor above), so this is app-level tree traversal
+// rather than a recursive SQL CTE.
+export async function getAllDescendantMerchantIds(merchantId: number): Promise<number[]> {
+  const db = await getDb();
+  if (!db) return [];
+  const all = await db.select({ id: merchants.id, parentId: merchants.parentId }).from(merchants);
+  const childrenByParent = new Map<number, number[]>();
+  for (const m of all) {
+    if (m.parentId == null) continue;
+    const siblings = childrenByParent.get(m.parentId) ?? [];
+    siblings.push(m.id);
+    childrenByParent.set(m.parentId, siblings);
+  }
+
+  const result: number[] = [];
+  const queue = [...(childrenByParent.get(merchantId) ?? [])];
+  while (queue.length > 0) {
+    const id = queue.shift()!;
+    result.push(id);
+    queue.push(...(childrenByParent.get(id) ?? []));
+  }
+  return result;
+}
+
+export interface SubordinatesSummary {
+  subordinateCount: number;
+  settlementCount: number;
+  totalNetProfit: number;
+  totalManagerOverrideShare: number;
+  totalCompanyShare: number;
+}
+
+// Manager-only rollup across their entire subordinate tree (sales_reps,
+// supervisors, leaders below them) - aggregated shares only, grossProfit/
+// promotionCost never included (same masking rule as mySettlements).
+export async function getSubordinatesSummary(managerId: number): Promise<SubordinatesSummary> {
+  const db = await getDb();
+  const descendantIds = await getAllDescendantMerchantIds(managerId);
+  if (!db || descendantIds.length === 0) {
+    return { subordinateCount: descendantIds.length, settlementCount: 0, totalNetProfit: 0, totalManagerOverrideShare: 0, totalCompanyShare: 0 };
+  }
+
+  const rows = await db.select().from(profitSettlements).where(inArray(profitSettlements.merchantId, descendantIds));
+
+  let totalNetProfit = 0;
+  let totalManagerOverrideShare = 0;
+  let totalCompanyShare = 0;
+  for (const row of rows) {
+    totalNetProfit = round2(totalNetProfit + parseFloat(row.netProfit));
+    totalManagerOverrideShare = round2(totalManagerOverrideShare + parseFloat(row.managerOverrideShare ?? "0"));
+    totalCompanyShare = round2(totalCompanyShare + parseFloat(row.companyShare));
+  }
+
+  return {
+    subordinateCount: descendantIds.length,
+    settlementCount: rows.length,
+    totalNetProfit,
+    totalManagerOverrideShare,
+    totalCompanyShare,
+  };
+}
+
 // ==================== Dashboard Stats ====================
 
-// Single source of truth for the digital commission percentage. Always called
-// with a *frozen* digitalLevelAtSaleTime (never merchant.digitalLevel), so a
-// later level upgrade can't retroactively change a past sale's payout.
+// Legacy digital commission percentage lookup - only used as a fallback for
+// rows created before commissionAtSaleTime existed (see resolveDigitalCommission
+// below). Never called with the merchant's *current* digitalLevel.
 export function digitalLevelToPercent(level: "1" | "2" | "3"): number {
   return level === "3" ? 0.5 : level === "2" ? 0.4 : 0.3;
+}
+
+// Single source of truth for resolving a merchant's commission into an
+// absolute IQD amount at the moment an order/sale is created — both
+// physicalOrders.commissionAtOrderTime and digitalSales.commissionAtSaleTime
+// are frozen via this same function, replacing the old
+// merchant.commission/digitalLevel-based freezing.
+export function computeFrozenCommission(
+  commissionType: "fixed" | "percentage",
+  commissionValue: number,
+  baseAmount: number,
+): number {
+  return commissionType === "fixed" ? commissionValue : Math.floor(baseAmount * (commissionValue / 100));
+}
+
+// digitalSales rows created before commissionAtSaleTime existed have it NULL
+// - fall back to the old digitalLevelAtSaleTime+digitalLevelToPercent path for
+// those (frozen at their own time, never recomputed). New rows always have
+// commissionAtSaleTime populated and use it directly.
+export function resolveDigitalCommission(sale: {
+  productPrice: number;
+  commissionAtSaleTime: number | null;
+  digitalLevelAtSaleTime: "1" | "2" | "3";
+}): number {
+  return sale.commissionAtSaleTime ?? Math.floor(sale.productPrice * digitalLevelToPercent(sale.digitalLevelAtSaleTime));
 }
 
 export async function getDashboardStats() {
@@ -686,10 +1013,11 @@ export async function getDashboardStats() {
   const deliveredDigitalSales = await db.select({
     productPrice: digitalSales.productPrice,
     digitalLevelAtSaleTime: digitalSales.digitalLevelAtSaleTime,
+    commissionAtSaleTime: digitalSales.commissionAtSaleTime,
   }).from(digitalSales).where(eq(digitalSales.status, "delivered"));
 
   const digiEarnings = deliveredDigitalSales.reduce(
-    (acc, sale) => acc + Math.floor(sale.productPrice * digitalLevelToPercent(sale.digitalLevelAtSaleTime)),
+    (acc, sale) => acc + resolveDigitalCommission(sale),
     0,
   );
 
@@ -771,11 +1099,13 @@ export async function getMerchantPerformance() {
       eq(digitalSales.merchantId, merchant.id),
       eq(digitalSales.status, "delivered"),
     ));
-    // Same freeze for digital sales: each row's own digitalLevelAtSaleTime, not
-    // the merchant's current digitalLevel.
+    // Same freeze for digital sales: each row's own commissionAtSaleTime (or
+    // digitalLevelAtSaleTime for legacy rows), never the merchant's current
+    // commissionValue/digitalLevel.
     const deliveredDigitalSales = await db.select({
       productPrice: digitalSales.productPrice,
       digitalLevelAtSaleTime: digitalSales.digitalLevelAtSaleTime,
+      commissionAtSaleTime: digitalSales.commissionAtSaleTime,
     }).from(digitalSales).where(and(
       eq(digitalSales.merchantId, merchant.id),
       eq(digitalSales.status, "delivered"),
@@ -792,9 +1122,9 @@ export async function getMerchantPerformance() {
       merchantEarnings = physEarningsRow?.value ? Number(physEarningsRow.value) : 0;
       adminProfit = physRevNum - merchantEarnings;
     } else {
-      // Digital: each delivered sale's own frozen level percentage
+      // Digital: each delivered sale's own frozen commission
       merchantEarnings = deliveredDigitalSales.reduce(
-        (acc, sale) => acc + Math.floor(sale.productPrice * digitalLevelToPercent(sale.digitalLevelAtSaleTime)),
+        (acc, sale) => acc + resolveDigitalCommission(sale),
         0,
       );
       adminProfit = digiRevNum - merchantEarnings;
@@ -811,8 +1141,6 @@ export async function getMerchantPerformance() {
       name: merchant.name,
       username: merchant.username,
       merchantType: merchant.merchantType,
-      commission: merchant.commission,
-      digitalLevel: merchant.digitalLevel,
       physicalOrders: physCount?.value ?? 0,
       physicalDelivered: physDeliveredCount?.value ?? 0,
       physicalReturned: physReturnedCount?.value ?? 0,

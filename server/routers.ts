@@ -1,5 +1,6 @@
 import { COOKIE_NAME } from "@shared/const";
 import type { Request } from "express";
+import { TRPCError } from "@trpc/server";
 import { z } from "zod";
 import { getSessionCookieOptions, isSecureRequest } from "./_core/cookies";
 import { notifyOwner } from "./_core/notification";
@@ -154,6 +155,7 @@ export const appRouter = router({
           name: merchant.name,
           username: merchant.username,
           merchantType: merchant.merchantType,
+          role: merchant.role,
         };
       } catch {
         return null;
@@ -236,6 +238,12 @@ export const appRouter = router({
         productId: z.number().optional(),
       }))
       .mutation(async ({ input, ctx }) => {
+        // Merchants are either fully physical or fully digital, never both -
+        // a digital-only account can't register a physical order.
+        if (ctx.merchant.merchantType !== "physical") {
+          throw new Error("هذا الحساب مخصص للمبيعات المادية فقط");
+        }
+
         const totalPrice = input.productPrice * input.quantity;
         const order = await db.createPhysicalOrder({
           ...input,
@@ -243,7 +251,7 @@ export const appRouter = router({
           totalPrice,
           // Freeze the merchant's commission as it stands right now — a later
           // commission change must never retroactively change this order.
-          commissionAtOrderTime: ctx.merchant.commission,
+          commissionAtOrderTime: db.computeFrozenCommission(ctx.merchant.commissionType, ctx.merchant.commissionValue, totalPrice),
         });
         // Notify owner
         try {
@@ -299,6 +307,12 @@ export const appRouter = router({
         proofImageName: z.string().min(1, "يجب رفع صورة إثبات التحويل قبل توثيق العملية"),
       }))
       .mutation(async ({ input, ctx }) => {
+        // Merchants are either fully physical or fully digital, never both -
+        // a physical-only account can't register a digital sale.
+        if (ctx.merchant.merchantType !== "digital") {
+          throw new Error("هذا الحساب مخصص للمبيعات الرقمية فقط");
+        }
+
         let proofImageKey: string | undefined;
         let proofImageUrl: string | undefined;
 
@@ -323,9 +337,9 @@ export const appRouter = router({
           productPrice: input.productPrice,
           proofImageKey,
           proofImageUrl,
-          // Freeze the merchant's commission level as it stands right now — a
-          // later level upgrade must never retroactively change this sale.
-          digitalLevelAtSaleTime: ctx.merchant.digitalLevel,
+          // Freeze the merchant's commission as it stands right now — a later
+          // commission change must never retroactively change this sale.
+          commissionAtSaleTime: db.computeFrozenCommission(ctx.merchant.commissionType, ctx.merchant.commissionValue, input.productPrice),
         });
 
         // Notify owner
@@ -476,6 +490,11 @@ export const appRouter = router({
         merchantType: z.enum(["physical", "digital"]),
         commission: z.number().int().min(0).default(0), // fixed IQD per order for physical
         digitalLevel: z.enum(["1", "2", "3"]).default("1"), // commission level for digital
+        role: z.enum(["sales_rep", "supervisor", "leader", "manager"]).default("sales_rep"),
+        parentId: z.number().nullable().default(null),
+        commissionType: z.enum(["fixed", "percentage"]).default("fixed"),
+        commissionValue: z.number().min(0).default(0),
+        overridePercentage: z.number().min(0).max(100).nullable().default(null), // manager role only
       }))
       .mutation(async ({ input }) => {
         const merchant = await db.createMerchantByAdmin(input);
@@ -487,14 +506,24 @@ export const appRouter = router({
         };
       }),
 
-    // Admin upgrades digital merchant level
-    upgradeLevel: appAdminProcedure
+    // Admin edits an existing merchant's profile + hierarchy/commission
+    // settings. Username/passcode excluded by design - see db.updateMerchantByAdmin.
+    update: appAdminProcedure
       .input(z.object({
         id: z.number(),
-        level: z.enum(["1", "2", "3"]),
+        name: z.string().min(2).max(255),
+        merchantType: z.enum(["physical", "digital"]),
+        commission: z.number().int().min(0).default(0),
+        digitalLevel: z.enum(["1", "2", "3"]).default("1"),
+        role: z.enum(["sales_rep", "supervisor", "leader", "manager"]).default("sales_rep"),
+        parentId: z.number().nullable().default(null),
+        commissionType: z.enum(["fixed", "percentage"]).default("fixed"),
+        commissionValue: z.number().min(0).default(0),
+        overridePercentage: z.number().min(0).max(100).nullable().default(null),
       }))
       .mutation(async ({ input }) => {
-        await db.updateMerchantLevel(input.id, input.level);
+        const { id, ...data } = input;
+        await db.updateMerchantByAdmin(id, data);
         return { success: true };
       }),
 
@@ -564,6 +593,77 @@ export const appRouter = router({
     // Merchant-facing: own settlement history.
     myHistory: merchantProcedure.query(async ({ ctx }) => {
       return await db.getSettlementsByMerchant(ctx.merchant.id);
+    }),
+  }),
+
+  // ==================== Profit Settlements (hierarchy commission system) ====================
+  // Fully separate from `settlements` above - new sales_rep/supervisor/leader/
+  // manager hierarchy flow. create/list/confirm stay admin-only (promotionCost
+  // is admin-entered by design); mySettlements/mySubordinates/subordinatesSummary
+  // below are the merchant-facing, role-gated views onto the same data.
+  profitSettlements: router({
+    create: appAdminProcedure
+      .input(z.object({
+        merchantId: z.number(),
+        productId: z.number().optional(),
+        periodStart: z.date(),
+        periodEnd: z.date(),
+        grossProfit: z.number().min(0),
+        promotionCost: z.number().min(0),
+        promotionProofUrl: z.string().max(500).optional(),
+      }))
+      .mutation(async ({ input }) => {
+        return await db.createProfitSettlement(input);
+      }),
+
+    list: appAdminProcedure
+      .input(z.object({
+        merchantId: z.number().optional(),
+        status: z.enum(["draft", "confirmed"]).optional(),
+      }))
+      .query(async ({ input }) => {
+        return await db.getFilteredProfitSettlements(input);
+      }),
+
+    confirm: appAdminProcedure
+      .input(z.object({ id: z.number() }))
+      .mutation(async ({ input }) => {
+        await db.confirmProfitSettlement(input.id);
+        return { success: true };
+      }),
+
+    // Merchant-facing: own profit settlements. Uses ctx.merchant.id only -
+    // never a client-supplied merchantId (same IDOR-safe convention as
+    // physicalOrders.myOrders). grossProfit/promotionCost are masked out
+    // unless the viewer is the sales_rep themself.
+    mySettlements: merchantProcedure.query(async ({ ctx }) => {
+      const rows = await db.getProfitSettlementsByMerchant(ctx.merchant.id);
+      return rows.map(row => db.maskProfitSettlementForRole(row, ctx.merchant.role));
+    }),
+
+    // Merchant-facing: direct subordinates + their settlements, for
+    // supervisor/leader only (a supervisor's subordinates are sales_reps, a
+    // leader's are supervisors). Not available to sales_rep (no subordinates)
+    // or manager (they get the aggregated subordinatesSummary instead).
+    mySubordinates: merchantProcedure.query(async ({ ctx }) => {
+      if (ctx.merchant.role !== "supervisor" && ctx.merchant.role !== "leader") {
+        throw new TRPCError({ code: "FORBIDDEN", message: "هذه البيانات متاحة فقط للمشرف والقائد" });
+      }
+      const subordinates = await db.getDirectSubordinatesWithSettlements(ctx.merchant.id);
+      return subordinates.map(({ merchant, settlements }) => ({
+        merchant,
+        settlements: settlements.map(row => db.maskProfitSettlementForRole(row, ctx.merchant.role)),
+      }));
+    }),
+
+    // Merchant-facing: manager-only rollup across their entire subordinate
+    // tree (sales_reps/supervisors/leaders below them) - aggregated shares
+    // only, never raw grossProfit/promotionCost.
+    subordinatesSummary: merchantProcedure.query(async ({ ctx }) => {
+      if (ctx.merchant.role !== "manager") {
+        throw new TRPCError({ code: "FORBIDDEN", message: "هذه البيانات متاحة فقط للمدير" });
+      }
+      return await db.getSubordinatesSummary(ctx.merchant.id);
     }),
   }),
 

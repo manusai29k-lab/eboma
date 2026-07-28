@@ -1,7 +1,7 @@
 import { trpc } from "@/lib/trpc";
 import { Button } from "@/components/ui/button";
 import { useLocation } from "wouter";
-import { Package, Smartphone, ListOrdered, LogOut, ArrowLeft, Sparkles, Wallet } from "lucide-react";
+import { Package, Smartphone, ListOrdered, LogOut, ArrowLeft, Sparkles, Wallet, Users } from "lucide-react";
 import { toast } from "sonner";
 import { useEffect } from "react";
 
@@ -120,57 +120,57 @@ export default function MerchantDashboard() {
             <p className="text-white/50 text-lg">اختر نوع العملية التي تريد تسجيلها</p>
           </div>
 
-          {/* Choice Cards */}
-          <div className="grid gap-6 md:grid-cols-2 mb-6">
-            {/* Physical Product */}
-            <div
-              className="group relative cursor-pointer rounded-3xl bg-white/[0.03] border border-violet-500/20 backdrop-blur-sm p-8 transition-all duration-300 hover:bg-white/[0.06] hover:border-violet-500/40 hover:-translate-y-1"
-              onClick={() => setLocation("/merchant/physical")}
-            >
-              {/* Glow */}
-              <div className="absolute inset-0 bg-gradient-to-br from-violet-600/10 to-transparent rounded-3xl opacity-0 group-hover:opacity-100 transition-opacity duration-300" />
+          {/* Choice Card - only the merchant's own type (physical XOR digital, never both) */}
+          <div className="grid gap-6 max-w-md mx-auto mb-6">
+            {merchant.merchantType === "physical" ? (
+              <div
+                className="group relative cursor-pointer rounded-3xl bg-white/[0.03] border border-violet-500/20 backdrop-blur-sm p-8 transition-all duration-300 hover:bg-white/[0.06] hover:border-violet-500/40 hover:-translate-y-1"
+                onClick={() => setLocation("/merchant/physical")}
+              >
+                {/* Glow */}
+                <div className="absolute inset-0 bg-gradient-to-br from-violet-600/10 to-transparent rounded-3xl opacity-0 group-hover:opacity-100 transition-opacity duration-300" />
 
-              <div className="relative">
-                <div className="flex items-center justify-center w-16 h-16 rounded-2xl bg-gradient-to-br from-violet-500 to-purple-700 shadow-lg shadow-violet-500/30 mx-auto mb-5">
-                  <Package className="w-8 h-8 text-white" />
+                <div className="relative">
+                  <div className="flex items-center justify-center w-16 h-16 rounded-2xl bg-gradient-to-br from-violet-500 to-purple-700 shadow-lg shadow-violet-500/30 mx-auto mb-5">
+                    <Package className="w-8 h-8 text-white" />
+                  </div>
+                  <h3 className="text-xl font-bold text-white text-center mb-2">منتج مادي</h3>
+                  <p className="text-sm text-white/50 text-center leading-relaxed mb-6">
+                    تسجيل طلب لمنتج مادي يتطلب التوصيل - أدخل بيانات العميل والمنتج والعنوان
+                  </p>
+                  <Button
+                    className="w-full bg-gradient-to-l from-violet-600 to-purple-600 hover:from-violet-500 hover:to-purple-500 text-white border-0 shadow-lg shadow-violet-600/20 transition-all duration-200 active:scale-[0.98]"
+                  >
+                    تسجيل طلب جديد
+                    <ArrowLeft className="w-4 h-4 ms-2" />
+                  </Button>
                 </div>
-                <h3 className="text-xl font-bold text-white text-center mb-2">منتج مادي</h3>
-                <p className="text-sm text-white/50 text-center leading-relaxed mb-6">
-                  تسجيل طلب لمنتج مادي يتطلب التوصيل - أدخل بيانات العميل والمنتج والعنوان
-                </p>
-                <Button
-                  className="w-full bg-gradient-to-l from-violet-600 to-purple-600 hover:from-violet-500 hover:to-purple-500 text-white border-0 shadow-lg shadow-violet-600/20 transition-all duration-200 active:scale-[0.98]"
-                >
-                  تسجيل طلب جديد
-                  <ArrowLeft className="w-4 h-4 ms-2" />
-                </Button>
               </div>
-            </div>
+            ) : (
+              <div
+                className="group relative cursor-pointer rounded-3xl bg-white/[0.03] border border-emerald-500/20 backdrop-blur-sm p-8 transition-all duration-300 hover:bg-white/[0.06] hover:border-emerald-500/40 hover:-translate-y-1"
+                onClick={() => setLocation("/merchant/digital")}
+              >
+                {/* Glow */}
+                <div className="absolute inset-0 bg-gradient-to-br from-emerald-600/10 to-transparent rounded-3xl opacity-0 group-hover:opacity-100 transition-opacity duration-300" />
 
-            {/* Digital Product */}
-            <div
-              className="group relative cursor-pointer rounded-3xl bg-white/[0.03] border border-emerald-500/20 backdrop-blur-sm p-8 transition-all duration-300 hover:bg-white/[0.06] hover:border-emerald-500/40 hover:-translate-y-1"
-              onClick={() => setLocation("/merchant/digital")}
-            >
-              {/* Glow */}
-              <div className="absolute inset-0 bg-gradient-to-br from-emerald-600/10 to-transparent rounded-3xl opacity-0 group-hover:opacity-100 transition-opacity duration-300" />
-
-              <div className="relative">
-                <div className="flex items-center justify-center w-16 h-16 rounded-2xl bg-gradient-to-br from-emerald-500 to-teal-700 shadow-lg shadow-emerald-500/30 mx-auto mb-5">
-                  <Smartphone className="w-8 h-8 text-white" />
+                <div className="relative">
+                  <div className="flex items-center justify-center w-16 h-16 rounded-2xl bg-gradient-to-br from-emerald-500 to-teal-700 shadow-lg shadow-emerald-500/30 mx-auto mb-5">
+                    <Smartphone className="w-8 h-8 text-white" />
+                  </div>
+                  <h3 className="text-xl font-bold text-white text-center mb-2">منتج رقمي</h3>
+                  <p className="text-sm text-white/50 text-center leading-relaxed mb-6">
+                    توثيق بيع منتج رقمي (كورس، كتاب) مع إثبات التحويل - التسليم فوري بدون توصيل
+                  </p>
+                  <Button
+                    className="w-full bg-gradient-to-l from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white border-0 shadow-lg shadow-emerald-600/20 transition-all duration-200 active:scale-[0.98]"
+                  >
+                    توثيق عملية بيع
+                    <ArrowLeft className="w-4 h-4 ms-2" />
+                  </Button>
                 </div>
-                <h3 className="text-xl font-bold text-white text-center mb-2">منتج رقمي</h3>
-                <p className="text-sm text-white/50 text-center leading-relaxed mb-6">
-                  توثيق بيع منتج رقمي (كورس، كتاب) مع إثبات التحويل - التسليم فوري بدون توصيل
-                </p>
-                <Button
-                  className="w-full bg-gradient-to-l from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white border-0 shadow-lg shadow-emerald-600/20 transition-all duration-200 active:scale-[0.98]"
-                >
-                  توثيق عملية بيع
-                  <ArrowLeft className="w-4 h-4 ms-2" />
-                </Button>
               </div>
-            </div>
+            )}
           </div>
 
           {/* My Orders */}
@@ -205,6 +205,25 @@ export default function MerchantDashboard() {
                 <div>
                   <p className="font-bold text-white">أرباحي</p>
                   <p className="text-sm text-white/40">رصيدك الحالي وسجل التسويات</p>
+                </div>
+              </div>
+              <ArrowLeft className="w-5 h-5 text-white/30 group-hover:text-white/60 group-hover:-translate-x-1 transition-all" />
+            </div>
+          </div>
+
+          {/* Team Profits */}
+          <div
+            className="group relative cursor-pointer rounded-2xl bg-white/[0.03] border border-purple-500/20 backdrop-blur-sm p-5 mt-4 transition-all duration-300 hover:bg-white/[0.06] hover:border-purple-500/40"
+            onClick={() => setLocation("/merchant/team")}
+          >
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-4">
+                <div className="flex items-center justify-center w-12 h-12 rounded-xl bg-gradient-to-br from-purple-500 to-indigo-700 shadow-lg shadow-purple-500/20">
+                  <Users className="w-6 h-6 text-white" />
+                </div>
+                <div>
+                  <p className="font-bold text-white">أرباح الفريق</p>
+                  <p className="text-sm text-white/40">تسوياتك وأداء فريقك</p>
                 </div>
               </div>
               <ArrowLeft className="w-5 h-5 text-white/30 group-hover:text-white/60 group-hover:-translate-x-1 transition-all" />

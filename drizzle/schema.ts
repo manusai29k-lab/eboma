@@ -1,4 +1,4 @@
-import { int, mysqlEnum, mysqlTable, text, timestamp, varchar, bigint } from "drizzle-orm/mysql-core";
+import { decimal, int, mysqlEnum, mysqlTable, text, timestamp, varchar, bigint } from "drizzle-orm/mysql-core";
 
 /**
  * Core user table backing Manus OAuth flow (admin/owner).
@@ -36,6 +36,20 @@ export const merchants = mysqlTable("merchants", {
   merchantType: mysqlEnum("merchantType", ["physical", "digital"]).default("physical").notNull(),
   commission: int("commission").default(0).notNull(), // fixed IQD per order for physical merchants
   digitalLevel: mysqlEnum("digitalLevel", ["1", "2", "3"]).default("1").notNull(), // commission level for digital merchants
+
+  // New hierarchy/commission system (sales_rep -> supervisor -> leader ->
+  // manager), additive alongside merchantType/commission/digitalLevel above
+  // (kept for the existing physical/digital commission flow).
+  role: mysqlEnum("role", ["sales_rep", "supervisor", "leader", "manager"]).default("sales_rep").notNull(),
+  // Self-reference to this same table's id (sales_rep -> supervisor -> leader
+  // -> manager). No DB-level FK, same as the rest of this schema (see
+  // physicalOrders.productId/settlementId comments) — app-level only.
+  parentId: int("parentId"),
+  commissionType: mysqlEnum("commissionType", ["fixed", "percentage"]).default("fixed").notNull(),
+  commissionValue: int("commissionValue").default(0).notNull(),
+  // manager role only — extra percentage of the net profit of every page under them
+  overridePercentage: int("overridePercentage"),
+
   failedAttempts: int("failedAttempts").default(0).notNull(),
   lockedUntil: timestamp("lockedUntil"),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
@@ -161,12 +175,18 @@ export const digitalSales = mysqlTable("digital_sales", {
   proofImageKey: text("proofImageKey"), // S3 key for the proof image
   proofImageUrl: text("proofImageUrl"), // /manus-storage/ path
   status: mysqlEnum("status", ["delivered", "cancelled"]).default("delivered").notNull(),
-  // Merchant's commission level at the moment this sale was created. Frozen on
-  // insert (same reasoning as physicalOrders.commissionAtOrderTime) — the
-  // percentage itself (0.3/0.4/0.5) is derived from this level, not stored
-  // separately, so there is a single source of truth. Existing rows default to
-  // "1" pending a one-time backfill — approximate for historical data only.
+  // Legacy commission freeze (pre commissionType/commissionValue). Superseded
+  // by commissionAtSaleTime below for every row created going forward — kept
+  // only so historical rows (which never got the new column populated) can
+  // still be read; never written to by new code. See db.ts resolveDigitalCommission.
   digitalLevelAtSaleTime: mysqlEnum("digitalLevelAtSaleTime", ["1", "2", "3"]).default("1").notNull(),
+  // Merchant's commission at the moment this sale was created, already
+  // resolved to an absolute IQD amount via commissionType/commissionValue
+  // (see db.ts computeFrozenCommission) — same freeze principle as
+  // physicalOrders.commissionAtOrderTime, just nullable here because rows
+  // predating this column have no such value (see digitalLevelAtSaleTime
+  // above for how those are still read).
+  commissionAtSaleTime: int("commissionAtSaleTime"),
   // Same semantics as physicalOrders.settlementId above.
   settlementId: int("settlementId"),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
@@ -209,3 +229,30 @@ export const settlements = mysqlTable("settlements", {
 
 export type Settlement = typeof settlements.$inferSelect;
 export type InsertSettlement = typeof settlements.$inferInsert;
+
+/**
+ * Profit settlements for the new hierarchy/commission system (sales_rep ->
+ * supervisor -> leader -> manager). Fully separate table from `settlements`
+ * above (the legacy merchantType-based commission flow), which stays
+ * untouched.
+ */
+export const profitSettlements = mysqlTable("profit_settlements", {
+  id: int("id").autoincrement().primaryKey(),
+  merchantId: int("merchantId").notNull(),
+  productId: int("productId"), // nullable - for settlements tied to a specific product
+  periodStart: timestamp("periodStart").notNull(),
+  periodEnd: timestamp("periodEnd").notNull(),
+  grossProfit: decimal("grossProfit", { precision: 14, scale: 2 }).notNull(),
+  promotionCost: decimal("promotionCost", { precision: 14, scale: 2 }).default("0").notNull(), // entered by admin only
+  promotionProofUrl: varchar("promotionProofUrl", { length: 500 }),
+  netProfit: decimal("netProfit", { precision: 14, scale: 2 }).notNull(), // computed
+  merchantShare: decimal("merchantShare", { precision: 14, scale: 2 }).notNull(),
+  managerOverrideShare: decimal("managerOverrideShare", { precision: 14, scale: 2 }), // nullable
+  companyShare: decimal("companyShare", { precision: 14, scale: 2 }).notNull(),
+  status: mysqlEnum("status", ["draft", "confirmed"]).default("draft").notNull(),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type ProfitSettlement = typeof profitSettlements.$inferSelect;
+export type InsertProfitSettlement = typeof profitSettlements.$inferInsert;
