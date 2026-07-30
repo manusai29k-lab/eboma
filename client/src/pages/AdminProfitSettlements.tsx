@@ -5,11 +5,12 @@ import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
-import { Percent, Eye, CheckCircle2 } from "lucide-react";
+import { Percent, Eye, CheckCircle2, ImagePlus, AlertTriangle, Clock } from "lucide-react";
 import { ROLE_CONFIG } from "@/lib/merchantRoles";
 import { toast } from "sonner";
-import { useState, useMemo } from "react";
+import { useState, useMemo, useRef } from "react";
 
 const previewButtonIdleLabel = "معاينة";
 const previewButtonLoadingLabel = "جاري الحساب...";
@@ -21,7 +22,19 @@ export default function AdminProfitSettlements() {
   const [startDate, setStartDate] = useState<string>("");
   const [endDate, setEndDate] = useState<string>("");
   const [promotionCost, setPromotionCost] = useState<string>("0");
+  const [promotionProofPreview, setPromotionProofPreview] = useState<string | null>(null);
+  const [promotionProofName, setPromotionProofName] = useState<string | undefined>(undefined);
   const [showPreview, setShowPreview] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setPromotionProofName(file.name);
+    const reader = new FileReader();
+    reader.onload = (ev) => setPromotionProofPreview(ev.target?.result as string);
+    reader.readAsDataURL(file);
+  };
 
   const merchants = trpc.profitSettlements.unsettledMerchants.useQuery(undefined, { refetchOnWindowFocus: false });
 
@@ -54,6 +67,8 @@ export default function AdminProfitSettlements() {
       setStartDate("");
       setEndDate("");
       setPromotionCost("0");
+      setPromotionProofPreview(null);
+      setPromotionProofName(undefined);
       utils.profitSettlements.unsettledMerchants.invalidate();
       utils.profitSettlements.unsettledOrders.invalidate();
     },
@@ -77,12 +92,37 @@ export default function AdminProfitSettlements() {
       merchantId: parseInt(merchantId),
       ...period!,
       promotionCost: parseFloat(promotionCost) || 0,
+      promotionProofBase64: promotionProofName ? (promotionProofPreview ?? undefined) : undefined,
+      promotionProofName,
     });
   };
 
   const orderRows = orders.data ?? [];
   const totalGrossProfit = orderRows.reduce((acc, o) => acc + o.grossProfitAtOrderTime, 0);
   const breakdown = preview.data;
+  const promotionCostValue = parseFloat(promotionCost) || 0;
+
+  // Draft settlements tab - lists every profitSettlements row still "draft"
+  // and lets the admin push it to "confirmed" via profitSettlements.confirm.
+  const draftSettlements = trpc.profitSettlements.list.useQuery({ status: "draft" }, { refetchOnWindowFocus: false });
+  const allMerchants = trpc.merchants.list.useQuery(undefined, { refetchOnWindowFocus: false });
+  const merchantNameMap = new Map(allMerchants.data?.map(m => [m.id, m.name]));
+
+  const confirmFinalMutation = trpc.profitSettlements.confirm.useMutation({
+    onSuccess: () => {
+      toast.success("تم تأكيد التسوية نهائياً");
+      utils.profitSettlements.list.invalidate();
+    },
+    onError: (error: any) => {
+      toast.error(error.message || "فشل التأكيد");
+    },
+  });
+
+  const handleConfirmFinal = (id: number) => {
+    if (confirm("هل أنت متأكد من التأكيد النهائي لهذه التسوية؟ لا يمكن التراجع.")) {
+      confirmFinalMutation.mutate({ id });
+    }
+  };
 
   return (
     <div className="space-y-6">
@@ -93,6 +133,19 @@ export default function AdminProfitSettlements() {
         </p>
       </div>
 
+      <Tabs defaultValue="create" className="w-full">
+        <TabsList className="grid w-full grid-cols-2 mb-4">
+          <TabsTrigger value="create">
+            <Percent className="w-4 h-4 ms-2" />
+            إنشاء تسوية جديدة
+          </TabsTrigger>
+          <TabsTrigger value="drafts">
+            <Clock className="w-4 h-4 ms-2" />
+            التسويات المعلّقة ({draftSettlements.data?.length ?? 0})
+          </TabsTrigger>
+        </TabsList>
+
+        <TabsContent value="create" className="space-y-6">
       {/* Selection */}
       <Card className="shadow-sm">
         <CardHeader>
@@ -125,7 +178,7 @@ export default function AdminProfitSettlements() {
               <Label>إلى تاريخ</Label>
               <Input type="date" value={endDate} onChange={(e) => { setEndDate(e.target.value); setShowPreview(false); }} />
             </div>
-            <div className="space-y-2">
+            <div className="space-y-2 border-2 border-amber-300 bg-amber-50/50 dark:bg-amber-950/20 rounded-lg p-3">
               <Label>كلفة الترويج للفترة (د.ع)</Label>
               <Input
                 type="number"
@@ -134,6 +187,25 @@ export default function AdminProfitSettlements() {
                 dir="ltr"
                 className="text-end"
               />
+            </div>
+          </div>
+
+          {/* Promotion proof image upload */}
+          <div className="mt-4 space-y-2">
+            <Label>صورة إثبات كلفة الترويج (اختياري)</Label>
+            <div
+              className="border-2 border-dashed rounded-xl p-4 text-center cursor-pointer hover:border-primary/50 transition-colors max-w-xs"
+              onClick={() => fileInputRef.current?.click()}
+            >
+              {promotionProofPreview ? (
+                <img src={promotionProofPreview} alt="معاينة إثبات الترويج" className="max-h-32 mx-auto rounded-lg" />
+              ) : (
+                <div className="py-3">
+                  <ImagePlus className="w-6 h-6 mx-auto text-muted-foreground mb-1" />
+                  <p className="text-sm text-muted-foreground">اضغط لرفع صورة إثبات</p>
+                </div>
+              )}
+              <input ref={fileInputRef} type="file" accept="image/*" className="hidden" onChange={handleFileChange} />
             </div>
           </div>
         </CardContent>
@@ -233,6 +305,29 @@ export default function AdminProfitSettlements() {
               </div>
             )}
 
+            {/* Read-only echo of the promotionCost value entered above, plus a
+                non-blocking warning when it's still 0 - the admin easily
+                misses the input in the selection card otherwise. */}
+            <div className="space-y-3 pt-2 border-t">
+              <p className="text-sm">
+                كلفة الترويج المُدخلة: <span className="font-semibold">{promotionCostValue.toLocaleString()} د.ع</span>
+              </p>
+              {promotionCostValue === 0 && (
+                <div className="flex items-start gap-2 p-3 rounded-lg bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-900">
+                  <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+                  <p className="text-sm text-amber-800 dark:text-amber-300">
+                    تنبيه: كلفة الترويج = 0، تأكد من إدخالها إذا كانت هناك تكلفة فعلية قبل التأكيد
+                  </p>
+                </div>
+              )}
+              {promotionProofPreview && (
+                <div>
+                  <p className="text-sm text-muted-foreground mb-1">صورة إثبات الترويج المُرفقة:</p>
+                  <img src={promotionProofPreview} alt="معاينة إثبات الترويج" className="max-h-24 rounded-lg border" />
+                </div>
+              )}
+            </div>
+
             <Button onClick={handleConfirm} disabled={createMutation.isPending} className="gap-2">
               <CheckCircle2 className="w-4 h-4" />
               {createMutation.isPending ? confirmButtonLoadingLabel : confirmButtonIdleLabel}
@@ -247,6 +342,66 @@ export default function AdminProfitSettlements() {
           {preview.isFetching ? previewButtonLoadingLabel : previewButtonIdleLabel}
         </Button>
       )}
+        </TabsContent>
+
+        <TabsContent value="drafts">
+          <Card className="shadow-sm">
+            <CardHeader>
+              <CardTitle className="text-lg">التسويات بحالة "مسودة"</CardTitle>
+            </CardHeader>
+            <CardContent className="p-0">
+              <div className="overflow-x-auto">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>التاجر</TableHead>
+                      <TableHead>الفترة</TableHead>
+                      <TableHead>صافي الربح</TableHead>
+                      <TableHead>حصة التاجر</TableHead>
+                      <TableHead>حصة الشركة</TableHead>
+                      <TableHead>تاريخ الإنشاء</TableHead>
+                      <TableHead>إجراء</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {draftSettlements.data?.map(s => (
+                      <TableRow key={s.id}>
+                        <TableCell>{merchantNameMap.get(s.merchantId) ?? "—"}</TableCell>
+                        <TableCell className="text-xs text-muted-foreground">
+                          {new Date(s.periodStart).toLocaleDateString("ar-IQ")} - {new Date(s.periodEnd).toLocaleDateString("ar-IQ")}
+                        </TableCell>
+                        <TableCell>{Number(s.netProfit).toLocaleString()} د.ع</TableCell>
+                        <TableCell className="font-semibold text-emerald-600">{Number(s.merchantShare).toLocaleString()} د.ع</TableCell>
+                        <TableCell className="font-semibold text-amber-600">{Number(s.companyShare).toLocaleString()} د.ع</TableCell>
+                        <TableCell className="text-xs text-muted-foreground">{new Date(s.createdAt).toLocaleDateString("ar-IQ")}</TableCell>
+                        <TableCell>
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={() => handleConfirmFinal(s.id)}
+                            disabled={confirmFinalMutation.isPending}
+                            className="gap-1"
+                          >
+                            <CheckCircle2 className="w-3.5 h-3.5" />
+                            تأكيد نهائي
+                          </Button>
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                    {draftSettlements.data?.length === 0 && (
+                      <TableRow>
+                        <TableCell colSpan={7} className="text-center text-muted-foreground py-8">
+                          لا توجد تسويات معلّقة حالياً
+                        </TableCell>
+                      </TableRow>
+                    )}
+                  </TableBody>
+                </Table>
+              </div>
+            </CardContent>
+          </Card>
+        </TabsContent>
+      </Tabs>
     </div>
   );
 }

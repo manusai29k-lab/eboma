@@ -84,6 +84,24 @@ async function uploadProductImage(base64?: string, name?: string): Promise<{ ima
   }
 }
 
+// Same base64-upload pattern as uploadProductImage above, for
+// profitSettlements.promotionProofUrl - admin uploads a proof-of-cost image
+// when confirming a hierarchical profit settlement. No imageKey needed here
+// (unlike products, a promotion proof is never deleted/replaced afterward).
+async function uploadPromotionProofImage(base64?: string, name?: string): Promise<{ url?: string }> {
+  if (!base64 || !name) return {};
+  try {
+    const base64Data = base64.split(",")[1] || base64;
+    const buffer = Buffer.from(base64Data, "base64");
+    const ext = name.split(".").pop() || "jpg";
+    const result = await storagePut(`promotion-proofs/${Date.now()}.${ext}`, buffer, `image/${ext}`);
+    return { url: result.url };
+  } catch (error) {
+    console.error("[ProfitSettlement] Failed to upload promotion proof image:", error);
+    return {};
+  }
+}
+
 export const appRouter = router({
   system: systemRouter,
 
@@ -635,10 +653,13 @@ export const appRouter = router({
         periodStart: z.date(),
         periodEnd: z.date(),
         promotionCost: z.number().min(0),
-        promotionProofUrl: z.string().max(500).optional(),
+        promotionProofBase64: z.string().optional(),
+        promotionProofName: z.string().optional(),
       }))
       .mutation(async ({ input }) => {
-        return await db.createProfitSettlement(input);
+        const { promotionProofBase64, promotionProofName, ...rest } = input;
+        const { url } = await uploadPromotionProofImage(promotionProofBase64, promotionProofName);
+        return await db.createProfitSettlement({ ...rest, promotionProofUrl: url });
       }),
 
     // Admin-only, read-only: merchants with at least one delivered order not

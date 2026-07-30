@@ -21,11 +21,14 @@ function formatPeriod(start: string | Date, end: string | Date) {
   return `${new Date(start).toLocaleDateString("ar-IQ")} - ${new Date(end).toLocaleDateString("ar-IQ")}`;
 }
 
-function SettlementRow({ settlement }: { settlement: any }) {
+function SettlementRow({ settlement, viewerRole }: { settlement: any; viewerRole?: string }) {
   const status = STATUS_BADGE[settlement.status] ?? STATUS_BADGE.draft;
   const grossProfit = formatMoney(settlement.grossProfit);
   const promotionCost = formatMoney(settlement.promotionCost);
   const managerOverrideShare = formatMoney(settlement.managerOverrideShare);
+  // netProfit is hidden from sales_rep viewers - merchantShare (their own cut)
+  // stays visible to everyone regardless of role.
+  const showNetProfit = viewerRole !== "sales_rep";
 
   return (
     <div className="rounded-2xl bg-white/[0.03] border border-white/10 p-5 backdrop-blur-sm">
@@ -47,7 +50,9 @@ function SettlementRow({ settlement }: { settlement: any }) {
         </div>
         <div className="text-start shrink-0">
           <p className="text-lg font-bold text-purple-300">{formatMoney(settlement.merchantShare)} د.ع</p>
-          <p className="text-xs text-white/30 mt-1">صافي الربح: {formatMoney(settlement.netProfit)} د.ع</p>
+          {showNetProfit && (
+            <p className="text-xs text-white/30 mt-1">صافي الربح: {formatMoney(settlement.netProfit)} د.ع</p>
+          )}
         </div>
       </div>
     </div>
@@ -169,7 +174,7 @@ export default function MerchantTeam() {
                     </div>
                     {settlements.length > 0 ? (
                       <div className="space-y-3">
-                        {settlements.map((s: any) => <SettlementRow key={s.id} settlement={s} />)}
+                        {settlements.map((s: any) => <SettlementRow key={s.id} settlement={s} viewerRole={role} />)}
                       </div>
                     ) : (
                       <p className="text-sm text-white/30">لا توجد تسويات بعد</p>
@@ -196,7 +201,7 @@ export default function MerchantTeam() {
             <p className="text-center text-white/40 py-8">جاري التحميل...</p>
           ) : mySettlements.data && mySettlements.data.length > 0 ? (
             <div className="space-y-3">
-              {mySettlements.data.map((s: any) => <SettlementRow key={s.id} settlement={s} />)}
+              {mySettlements.data.map((s: any) => <SettlementRow key={s.id} settlement={s} viewerRole={role} />)}
             </div>
           ) : (
             <div className="text-center py-12">

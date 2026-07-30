@@ -205,6 +205,7 @@ export default function MerchantDashboard() {
                 <div>
                   <p className="font-bold text-white">أرباحي</p>
                   <p className="text-sm text-white/40">رصيدك الحالي وسجل التسويات</p>
+                  <p className="text-xs text-white/25 mt-1">لا يشمل تسويات الأرباح الهرمية — راجع "أرباح الفريق"</p>
                 </div>
               </div>
               <ArrowLeft className="w-5 h-5 text-white/30 group-hover:text-white/60 group-hover:-translate-x-1 transition-all" />
