@@ -9,6 +9,7 @@ import { storagePut } from "./storage";
 import { systemRouter } from "./_core/systemRouter";
 import { appAdminProcedure, merchantProcedure, protectedProcedure, publicProcedure, router } from "./_core/trpc";
 import * as db from "./db";
+import { comparePassword } from "./lib/password";
 
 // ==================== Merchant Auth ====================
 
@@ -187,7 +188,7 @@ export const appRouter = router({
           const remaining = Math.ceil((new Date(admin.lockedUntil).getTime() - Date.now()) / 60000);
           throw new Error(`تم قفل الحساب مؤقتاً. حاول بعد ${remaining} دقيقة`);
         }
-        if (admin.passcode !== input.passcode) {
+        if (!(await comparePassword(input.passcode, admin.passcode))) {
           const attempts = await db.incrementAdminFailedAttempts(admin.id);
           if (attempts >= 5) {
             throw new Error("تم قفل الحساب لمدة 15 دقيقة بسبب 5 محاولات خاطئة");
@@ -245,6 +246,11 @@ export const appRouter = router({
         }
 
         const totalPrice = input.productPrice * input.quantity;
+        // Freeze the linked catalog product's cost fields as they stand right
+        // now, same principle as the commission freeze below — undefined
+        // (no productId, or product since deleted) resolves to zero cost.
+        const product = input.productId ? await db.getPhysicalProductById(input.productId) : undefined;
+        const costs = db.computeFrozenProductCosts(product, input.quantity, totalPrice);
         const order = await db.createPhysicalOrder({
           ...input,
           merchantId: ctx.merchant.id,
@@ -252,6 +258,7 @@ export const appRouter = router({
           // Freeze the merchant's commission as it stands right now — a later
           // commission change must never retroactively change this order.
           commissionAtOrderTime: db.computeFrozenCommission(ctx.merchant.commissionType, ctx.merchant.commissionValue, totalPrice),
+          ...costs,
         });
         // Notify owner
         try {
@@ -265,7 +272,10 @@ export const appRouter = router({
 
     myOrders: merchantProcedure
       .query(async ({ ctx }) => {
-        return await db.getPhysicalOrdersByMerchant(ctx.merchant.id);
+        const rows = await db.getPhysicalOrdersByMerchant(ctx.merchant.id);
+        // Cost/profit fields stripped from the response for merchants
+        // without canViewCosts — enforced here, not just hidden in the UI.
+        return rows.map(o => db.maskPhysicalOrderForMerchant(o, ctx.merchant.canViewCosts));
       }),
 
     list: appAdminProcedure.query(async () => {
@@ -394,6 +404,8 @@ export const appRouter = router({
         type: z.string().min(1).max(255),
         description: z.string().optional(),
         stock: z.number().int().default(0),
+        wholesaleCost: z.number().int().min(0).optional(),
+        deliveryCost: z.number().int().min(0).optional(),
         imageBase64: z.string().optional(),
         imageName: z.string().optional(),
       }))
@@ -411,6 +423,8 @@ export const appRouter = router({
         type: z.string().min(1).max(255).optional(),
         description: z.string().optional(),
         stock: z.number().int().optional(),
+        wholesaleCost: z.number().int().min(0).optional(),
+        deliveryCost: z.number().int().min(0).optional(),
         imageBase64: z.string().optional(),
         imageName: z.string().optional(),
       }))
@@ -481,6 +495,13 @@ export const appRouter = router({
       return await db.getMerchantPerformance();
     }),
 
+    // Flat list for the org-chart page (client/src/pages/AdminOrgTree.tsx) -
+    // the tree itself is assembled client-side from parentId, no recursive
+    // SQL here.
+    orgTree: appAdminProcedure.query(async () => {
+      return await db.getMerchantsOrgTree();
+    }),
+
     // Admin creates merchant accounts (no open signup)
     create: appAdminProcedure
       .input(z.object({
@@ -494,7 +515,8 @@ export const appRouter = router({
         parentId: z.number().nullable().default(null),
         commissionType: z.enum(["fixed", "percentage"]).default("fixed"),
         commissionValue: z.number().min(0).default(0),
-        overridePercentage: z.number().min(0).max(100).nullable().default(null), // manager role only
+        overridePercentage: z.number().min(0).max(100).nullable().default(null), // supervisor/leader/manager, never sales_rep
+        canViewCosts: z.boolean().default(false), // whether merchant sees cost/profit on own orders
       }))
       .mutation(async ({ input }) => {
         const merchant = await db.createMerchantByAdmin(input);
@@ -520,6 +542,7 @@ export const appRouter = router({
         commissionType: z.enum(["fixed", "percentage"]).default("fixed"),
         commissionValue: z.number().min(0).default(0),
         overridePercentage: z.number().min(0).max(100).nullable().default(null),
+        canViewCosts: z.boolean().default(false),
       }))
       .mutation(async ({ input }) => {
         const { id, ...data } = input;
@@ -602,18 +625,53 @@ export const appRouter = router({
   // is admin-entered by design); mySettlements/mySubordinates/subordinatesSummary
   // below are the merchant-facing, role-gated views onto the same data.
   profitSettlements: router({
+    // grossProfit is no longer a client input - db.createProfitSettlement
+    // derives it from delivered physicalOrders.grossProfitAtOrderTime within
+    // the period (see db.ts).
     create: appAdminProcedure
       .input(z.object({
         merchantId: z.number(),
         productId: z.number().optional(),
         periodStart: z.date(),
         periodEnd: z.date(),
-        grossProfit: z.number().min(0),
         promotionCost: z.number().min(0),
         promotionProofUrl: z.string().max(500).optional(),
       }))
       .mutation(async ({ input }) => {
         return await db.createProfitSettlement(input);
+      }),
+
+    // Admin-only, read-only: merchants with at least one delivered order not
+    // yet swept into a profit settlement - populates the merchant picker on
+    // the hierarchical settlements admin page.
+    unsettledMerchants: appAdminProcedure.query(async () => {
+      return await db.getMerchantsWithUnsettledProfitOrders();
+    }),
+
+    // Admin-only, read-only: the eligible delivered orders (with their
+    // frozen cost/profit snapshot) for a merchant within a period - the
+    // detailed breakdown table on the admin page.
+    unsettledOrders: appAdminProcedure
+      .input(z.object({
+        merchantId: z.number(),
+        periodStart: z.date(),
+        periodEnd: z.date(),
+      }))
+      .query(async ({ input }) => {
+        return await db.getEligibleProfitOrders(input.merchantId, input.periodStart, input.periodEnd);
+      }),
+
+    // Admin-only, read-only: dry-run of create's calculation (same
+    // grossProfit derivation), no DB writes - powers the "معاينة" button.
+    preview: appAdminProcedure
+      .input(z.object({
+        merchantId: z.number(),
+        periodStart: z.date(),
+        periodEnd: z.date(),
+        promotionCost: z.number().min(0),
+      }))
+      .query(async ({ input }) => {
+        return await db.previewProfitSettlement(input.merchantId, input.periodStart, input.periodEnd, input.promotionCost);
       }),
 
     list: appAdminProcedure

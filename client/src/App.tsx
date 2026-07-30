@@ -18,6 +18,8 @@ import AdminProducts from "./pages/AdminProducts";
 import AdminMerchants from "./pages/AdminMerchants";
 import AdminReports from "./pages/AdminReports";
 import AdminSettlements from "./pages/AdminSettlements";
+import AdminOrgTree from "./pages/AdminOrgTree";
+import AdminProfitSettlements from "./pages/AdminProfitSettlements";
 import AdminLayout from "./pages/admin/AdminLayout";
 
 function Router() {
@@ -47,6 +49,8 @@ function Router() {
             <Route path="/merchants" component={AdminMerchants} />
             <Route path="/reports" component={AdminReports} />
             <Route path="/settlements" component={AdminSettlements} />
+            <Route path="/org-tree" component={AdminOrgTree} />
+            <Route path="/profit-settlements" component={AdminProfitSettlements} />
           </Switch>
         </AdminLayout>
       </Route>

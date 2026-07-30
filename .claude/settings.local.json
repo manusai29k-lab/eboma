@@ -5,7 +5,8 @@
       "PowerShell(pnpm *)",
       "PowerShell(Copy-Item *)",
       "PowerShell(Get-Command *)",
-      "PowerShell(npm view)"
+      "PowerShell(npm view)",
+      "Bash(npx vitest *)"
     ]
   }
 }

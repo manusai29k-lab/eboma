@@ -1,6 +1,7 @@
 import { eq } from "drizzle-orm";
 import { admins } from "../../drizzle/schema";
 import { getDb } from "../db";
+import { hashPassword } from "../lib/password";
 
 // One-time seed for a test admin account. Run after `pnpm db:push` has created
 // the `admins` table: `npx tsx server/scripts/seedAdmin.ts`
@@ -21,7 +22,8 @@ async function main() {
     return;
   }
 
-  await db.insert(admins).values({ username: USERNAME, passcode: PASSCODE, name: NAME });
+  const hashed = await hashPassword(PASSCODE);
+  await db.insert(admins).values({ username: USERNAME, passcode: hashed, name: NAME });
   console.log(`Created admin account -> username: "${USERNAME}", passcode: "${PASSCODE}"`);
 }
 

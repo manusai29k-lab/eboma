@@ -1,4 +1,4 @@
-import { decimal, int, mysqlEnum, mysqlTable, text, timestamp, varchar, bigint } from "drizzle-orm/mysql-core";
+import { boolean, decimal, int, mysqlEnum, mysqlTable, text, timestamp, varchar, bigint } from "drizzle-orm/mysql-core";
 
 /**
  * Core user table backing Manus OAuth flow (admin/owner).
@@ -50,6 +50,13 @@ export const merchants = mysqlTable("merchants", {
   // manager role only — extra percentage of the net profit of every page under them
   overridePercentage: int("overridePercentage"),
 
+  // Admin-controlled visibility flag - whether this merchant is allowed to
+  // see wholesaleCost/deliveryCost/grossProfit fields on their own physical
+  // orders (see physicalOrders.wholesaleCostAtOrderTime etc. below and
+  // db.maskPhysicalOrderForMerchant). Defaults false for every merchant
+  // regardless of role; toggled manually by admin per merchant.
+  canViewCosts: boolean("canViewCosts").default(false).notNull(),
+
   failedAttempts: int("failedAttempts").default(0).notNull(),
   lockedUntil: timestamp("lockedUntil"),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
@@ -96,6 +103,12 @@ export const physicalProducts = mysqlTable("physical_products", {
   stock: int("stock").default(0).notNull(),
   imageKey: text("imageKey"), // S3 key, same pattern as digitalSales.proofImageKey
   imageUrl: text("imageUrl"), // /manus-storage/ path, same pattern as digitalSales.proofImageUrl
+  // Admin-only cost inputs, never exposed via the public/merchant-facing
+  // list query (db.getAllPhysicalProducts) — same protection as `stock`
+  // above. Nullable = cost not entered yet, treated as 0 when frozen onto a
+  // physicalOrders row (see db.computeFrozenProductCosts).
+  wholesaleCost: int("wholesaleCost"), // per-unit wholesale cost
+  deliveryCost: int("deliveryCost"), // flat delivery cost per order, regardless of quantity
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
 });
@@ -149,12 +162,34 @@ export const physicalOrders = mysqlTable("physical_orders", {
   // backfill (server/scripts/backfillCommissionSnapshots.ts) — approximate for
   // historical data only.
   commissionAtOrderTime: int("commissionAtOrderTime").notNull().default(0),
+  // Cost snapshot at order-creation time, frozen from the linked
+  // physicalProducts row via db.computeFrozenProductCosts (same
+  // freeze-on-insert principle as commissionAtOrderTime above — a later
+  // edit to the product's cost never retroactively changes past orders).
+  // wholesaleCostAtOrderTime = product.wholesaleCost * quantity (per-unit).
+  // deliveryCostAtOrderTime = product.deliveryCost as-is (flat per order,
+  // not multiplied by quantity). Both default 0 when productId is unset
+  // (manual "إدخال يدوي" entry) or the linked product has no cost entered.
+  // grossProfitAtOrderTime = totalPrice - wholesaleCostAtOrderTime -
+  // deliveryCostAtOrderTime (does not deduct commissionAtOrderTime).
+  // Only ever readable by a merchant whose merchants.canViewCosts is true
+  // (see db.maskPhysicalOrderForMerchant) - admin always sees these.
+  wholesaleCostAtOrderTime: int("wholesaleCostAtOrderTime").default(0).notNull(),
+  deliveryCostAtOrderTime: int("deliveryCostAtOrderTime").default(0).notNull(),
+  grossProfitAtOrderTime: int("grossProfitAtOrderTime").default(0).notNull(),
   // NULL = not yet settled (still counts toward the merchant's current
   // settlement balance if status is terminal). Set once by an admin
   // settlement sweep (server/db.ts createSettlement), never cleared or
   // reassigned afterward. No FK (this schema has none anywhere) — app-level
   // integrity only, same as merchantId above.
   settlementId: int("settlementId"),
+  // Fully independent from settlementId above — belongs to the separate
+  // hierarchical profit-sharing flow (profitSettlements/profitSettlementShares,
+  // see db.createProfitSettlement). NULL = not yet swept into a hierarchical
+  // profit settlement. An order can be settled by the legacy commission
+  // system (settlementId) and the hierarchical profit system
+  // (profitSettlementId) independently, in either order, without conflict.
+  profitSettlementId: int("profitSettlementId"),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
 });
@@ -256,3 +291,27 @@ export const profitSettlements = mysqlTable("profit_settlements", {
 
 export type ProfitSettlement = typeof profitSettlements.$inferSelect;
 export type InsertProfitSettlement = typeof profitSettlements.$inferInsert;
+
+/**
+ * One row per ancestor (any role with a non-null overridePercentage at
+ * settlement time - supervisor/leader/manager, not necessarily consecutive
+ * in the hierarchy) who received a share of a given profitSettlements row.
+ * Replaces the old single profitSettlements.managerOverrideShare column,
+ * which stays in the schema (nullable) for backward-compat reading of any
+ * pre-existing rows but is never written to going forward - see
+ * db.createProfitSettlement. role/overridePercentage are frozen snapshots
+ * at settlement time, same freeze-on-insert principle as
+ * physicalOrders.commissionAtOrderTime.
+ */
+export const profitSettlementShares = mysqlTable("profit_settlement_shares", {
+  id: int("id").autoincrement().primaryKey(),
+  settlementId: int("settlementId").notNull(), // -> profitSettlements.id, no FK (same as rest of this schema)
+  merchantId: int("merchantId").notNull(), // the ancestor who received this share
+  role: mysqlEnum("role", ["sales_rep", "supervisor", "leader", "manager"]).notNull(),
+  overridePercentage: int("overridePercentage").notNull(),
+  shareAmount: decimal("shareAmount", { precision: 14, scale: 2 }).notNull(),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+
+export type ProfitSettlementShare = typeof profitSettlementShares.$inferSelect;
+export type InsertProfitSettlementShare = typeof profitSettlementShares.$inferInsert;

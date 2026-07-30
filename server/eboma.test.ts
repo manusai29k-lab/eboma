@@ -1,6 +1,12 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
+import bcrypt from "bcryptjs";
 import { appRouter } from "./routers";
 import type { TrpcContext } from "./_core/context";
+
+// admin.passcode is now a bcrypt hash (see server/lib/password.ts) - tests
+// that mock an admin row must store a real hash, not the plaintext passcode,
+// since the login route compares via bcrypt.compare.
+const ADMIN_PASSCODE_HASH = bcrypt.hashSync("admin1234", 12);
 
 // Mock db module with updated function names. Spreads the real module first
 // so pure helpers (computeFrozenCommission, digitalLevelToPercent,
@@ -132,6 +138,7 @@ function createMerchantContext(
       commissionType: overrides.commissionType ?? "fixed",
       commissionValue: overrides.commissionValue ?? 1000,
       overridePercentage: null,
+      canViewCosts: false,
       failedAttempts: 0,
       lockedUntil: null,
       createdAt: new Date(),
@@ -208,7 +215,7 @@ describe("Admin Auth (internal admins table)", () => {
 
   it("should login with correct username and passcode", async () => {
     vi.mocked(db.getAdminByUsername).mockResolvedValue({
-      id: 1, username: "admin", passcode: "admin1234", name: "IBRAHIM WALEED",
+      id: 1, username: "admin", passcode: ADMIN_PASSCODE_HASH, name: "IBRAHIM WALEED",
       failedAttempts: 0, lockedUntil: null,
       createdAt: new Date(), updatedAt: new Date(),
     } as any);
@@ -227,7 +234,7 @@ describe("Admin Auth (internal admins table)", () => {
 
   it("should reject login with wrong passcode", async () => {
     vi.mocked(db.getAdminByUsername).mockResolvedValue({
-      id: 1, username: "admin", passcode: "admin1234", name: "IBRAHIM WALEED",
+      id: 1, username: "admin", passcode: ADMIN_PASSCODE_HASH, name: "IBRAHIM WALEED",
       failedAttempts: 0, lockedUntil: null,
       createdAt: new Date(), updatedAt: new Date(),
     } as any);

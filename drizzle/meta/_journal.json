@@ -57,6 +57,20 @@
       "when": 1785275609447,
       "tag": "0007_lonely_madame_hydra",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "5",
+      "when": 1785402363725,
+      "tag": "0008_pink_katie_power",
+      "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "5",
+      "when": 1785414551546,
+      "tag": "0009_skinny_colossus",
+      "breakpoints": true
     }
   ]
 }

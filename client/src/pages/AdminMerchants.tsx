@@ -6,16 +6,19 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Switch } from "@/components/ui/switch";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from "@/components/ui/dialog";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Users, Trash2, Plus, KeyRound, Copy, RefreshCw, Check, Wallet, Pencil } from "lucide-react";
 import { RoleBadge } from "@/components/RoleBadge";
+import { MerchantParentCombobox, NO_PARENT_VALUE } from "@/components/MerchantParentCombobox";
 import { ROLE_CONFIG } from "@/lib/merchantRoles";
 import { toast } from "sonner";
 import { useLocation } from "wouter";
 import { useState } from "react";
 
-const NO_PARENT_VALUE = "none";
+const visibleLabel = "ظاهرة";
+const hiddenLabel = "مخفية";
 
 export default function AdminMerchants() {
   const [, setLocation] = useLocation();
@@ -46,6 +49,7 @@ export default function AdminMerchants() {
       setNewCommissionType("fixed");
       setNewCommissionValue("0");
       setNewOverridePercentage("0");
+      setNewCanViewCosts(false);
     },
     onError: (error: any) => {
       toast.error(error.message || "فشل إنشاء الحساب");
@@ -109,6 +113,7 @@ export default function AdminMerchants() {
   const [newCommissionType, setNewCommissionType] = useState<"fixed" | "percentage">("fixed");
   const [newCommissionValue, setNewCommissionValue] = useState("0");
   const [newOverridePercentage, setNewOverridePercentage] = useState("0");
+  const [newCanViewCosts, setNewCanViewCosts] = useState(false);
 
   // Edit merchant dialog state
   const [showEditDialog, setShowEditDialog] = useState(false);
@@ -121,6 +126,7 @@ export default function AdminMerchants() {
   const [editCommissionType, setEditCommissionType] = useState<"fixed" | "percentage">("fixed");
   const [editCommissionValue, setEditCommissionValue] = useState("0");
   const [editOverridePercentage, setEditOverridePercentage] = useState("0");
+  const [editCanViewCosts, setEditCanViewCosts] = useState(false);
 
   // Reset password dialog state
   const [showResetDialog, setShowResetDialog] = useState(false);
@@ -162,7 +168,8 @@ export default function AdminMerchants() {
       parentId: newParentId === NO_PARENT_VALUE ? null : parseInt(newParentId),
       commissionType: newCommissionType,
       commissionValue: parseFloat(newCommissionValue) || 0,
-      overridePercentage: newRole === "manager" ? (parseFloat(newOverridePercentage) || 0) : null,
+      overridePercentage: newRole !== "sales_rep" ? (parseFloat(newOverridePercentage) || 0) : null,
+      canViewCosts: newCanViewCosts,
     });
   };
 
@@ -175,6 +182,7 @@ export default function AdminMerchants() {
     setEditCommissionType(merchant.commissionType);
     setEditCommissionValue(String(merchant.commissionValue ?? 0));
     setEditOverridePercentage(String(merchant.overridePercentage ?? 0));
+    setEditCanViewCosts(merchant.canViewCosts ?? false);
     setShowEditDialog(true);
   };
 
@@ -193,7 +201,8 @@ export default function AdminMerchants() {
       parentId: editParentId === NO_PARENT_VALUE ? null : parseInt(editParentId),
       commissionType: editCommissionType,
       commissionValue: parseFloat(editCommissionValue) || 0,
-      overridePercentage: editRole === "manager" ? (parseFloat(editOverridePercentage) || 0) : null,
+      overridePercentage: editRole !== "sales_rep" ? (parseFloat(editOverridePercentage) || 0) : null,
+      canViewCosts: editCanViewCosts,
     });
   };
 
@@ -284,6 +293,7 @@ export default function AdminMerchants() {
                     <TableHead>يتبع لـ</TableHead>
                     <TableHead>النوع</TableHead>
                     <TableHead>العمولة</TableHead>
+                    <TableHead>التكاليف</TableHead>
                     <TableHead>طلبات مادية</TableHead>
                     <TableHead>مبيعات رقمية</TableHead>
                     <TableHead>إجمالي المبيعات</TableHead>
@@ -320,6 +330,17 @@ export default function AdminMerchants() {
                           {merchant.commissionType === "fixed"
                             ? `${merchant.commissionValue.toLocaleString()} د.ع (ثابت)`
                             : `${merchant.commissionValue}% (نسبة)`}
+                        </TableCell>
+                        {/* التكاليف - هل يرى التاجر تكلفة الجملة/التوصيل/صافي الربح */}
+                        <TableCell>
+                          <Badge
+                            variant="outline"
+                            className={merchant.canViewCosts
+                              ? "bg-emerald-50 text-emerald-700 border-emerald-200"
+                              : "bg-muted text-muted-foreground"}
+                          >
+                            {merchant.canViewCosts ? visibleLabel : hiddenLabel}
+                          </Badge>
                         </TableCell>
                         <TableCell>{perf?.physicalOrders ?? 0}</TableCell>
                         <TableCell>{perf?.digitalSales ?? 0}</TableCell>
@@ -470,17 +491,13 @@ export default function AdminMerchants() {
             </div>
             <div className="space-y-2">
               <Label htmlFor="new-parent">يتبع لـ (اختياري)</Label>
-              <Select value={newParentId} onValueChange={setNewParentId}>
-                <SelectTrigger id="new-parent">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value={NO_PARENT_VALUE}>بدون - على القمة</SelectItem>
-                  {merchants.data?.map((m) => (
-                    <SelectItem key={m.id} value={String(m.id)}>{m.name} — {ROLE_CONFIG[m.role]?.label ?? m.role}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              <MerchantParentCombobox
+                merchants={merchants.data ?? []}
+                value={newParentId}
+                onChange={setNewParentId}
+                childRole={newRole}
+                childCommissionValue={parseFloat(newCommissionValue) || 0}
+              />
             </div>
             <div className="space-y-2">
               <Label htmlFor="new-commission-type">نوع العمولة</Label>
@@ -505,7 +522,7 @@ export default function AdminMerchants() {
                 onChange={(e) => setNewCommissionValue(e.target.value)}
               />
             </div>
-            {newRole === "manager" && (
+            {newRole !== "sales_rep" && (
               <div className="space-y-2">
                 <Label htmlFor="new-override">نسبة الحصة الإضافية (%)</Label>
                 <Input
@@ -517,6 +534,13 @@ export default function AdminMerchants() {
                 <p className="text-xs text-muted-foreground">نسبة إضافية من صافي ربح كل من تحته بالهيكل الهرمي</p>
               </div>
             )}
+            <div className="flex items-center justify-between pt-2 border-t">
+              <div className="space-y-0.5">
+                <Label htmlFor="new-can-view-costs">إظهار التكاليف للتاجر</Label>
+                <p className="text-xs text-muted-foreground">يسمح للتاجر برؤية تكلفة الجملة والتوصيل وصافي الربح التقديري لطلباته</p>
+              </div>
+              <Switch id="new-can-view-costs" checked={newCanViewCosts} onCheckedChange={setNewCanViewCosts} />
+            </div>
             <DialogFooter>
               <Button type="button" variant="outline" onClick={() => setShowCreateDialog(false)}>
                 إلغاء
@@ -583,17 +607,14 @@ export default function AdminMerchants() {
             </div>
             <div className="space-y-2">
               <Label htmlFor="edit-parent">يتبع لـ (اختياري)</Label>
-              <Select value={editParentId} onValueChange={setEditParentId}>
-                <SelectTrigger id="edit-parent">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value={NO_PARENT_VALUE}>بدون - على القمة</SelectItem>
-                  {merchants.data?.filter((m) => m.id !== editMerchantId).map((m) => (
-                    <SelectItem key={m.id} value={String(m.id)}>{m.name} — {ROLE_CONFIG[m.role]?.label ?? m.role}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              <MerchantParentCombobox
+                merchants={merchants.data ?? []}
+                value={editParentId}
+                onChange={setEditParentId}
+                childRole={editRole}
+                childCommissionValue={parseFloat(editCommissionValue) || 0}
+                excludeId={editMerchantId}
+              />
             </div>
             <div className="space-y-2">
               <Label htmlFor="edit-commission-type">نوع العمولة</Label>
@@ -618,7 +639,7 @@ export default function AdminMerchants() {
                 onChange={(e) => setEditCommissionValue(e.target.value)}
               />
             </div>
-            {editRole === "manager" && (
+            {editRole !== "sales_rep" && (
               <div className="space-y-2">
                 <Label htmlFor="edit-override">نسبة الحصة الإضافية (%)</Label>
                 <Input
@@ -630,6 +651,13 @@ export default function AdminMerchants() {
                 <p className="text-xs text-muted-foreground">نسبة إضافية من صافي ربح كل من تحته بالهيكل الهرمي</p>
               </div>
             )}
+            <div className="flex items-center justify-between pt-2 border-t">
+              <div className="space-y-0.5">
+                <Label htmlFor="edit-can-view-costs">إظهار التكاليف للتاجر</Label>
+                <p className="text-xs text-muted-foreground">يسمح للتاجر برؤية تكلفة الجملة والتوصيل وصافي الربح التقديري لطلباته</p>
+              </div>
+              <Switch id="edit-can-view-costs" checked={editCanViewCosts} onCheckedChange={setEditCanViewCosts} />
+            </div>
             <DialogFooter>
               <Button type="button" variant="outline" onClick={() => setShowEditDialog(false)}>
                 إلغاء
