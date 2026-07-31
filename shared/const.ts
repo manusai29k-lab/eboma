@@ -2,6 +2,12 @@ export const COOKIE_NAME = "app_session_id";
 export const ONE_YEAR_MS = 1000 * 60 * 60 * 24 * 365;
 export const AXIOS_TIMEOUT_MS = 30_000;
 export const UNAUTHED_ERR_MSG = 'Please login (10001)';
+// Separate from UNAUTHED_ERR_MSG above (Manus OAuth / requireUser /
+// protectedProcedure only) so client/src/main.tsx's global
+// redirectToLoginIfUnauthorized never mistakes an expired merchant session
+// for a Manus OAuth issue and sends the browser to the external OAuth
+// portal. Used exclusively by merchantProcedure (server/_core/trpc.ts).
+export const MERCHANT_UNAUTHED_ERR_MSG = 'Please login (10003)';
 export const NOT_ADMIN_ERR_MSG = 'You do not have required permission (10002)';
 
 // One-time nonce cookie that binds an OAuth login to the browser that started
