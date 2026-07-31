@@ -54,6 +54,12 @@ vi.mock("./db", async (importOriginal) => {
   createSettlement: vi.fn(),
   getSettlementsByMerchant: vi.fn(),
   getFilteredSettlements: vi.fn(),
+  getMerchantBalance: vi.fn(),
+  settleMerchantPayout: vi.fn(),
+  getMerchantShareDetails: vi.fn(),
+  getMerchantsWithOverrideBalances: vi.fn(),
+  getPayoutsByMerchant: vi.fn(),
+  getProfitSettlementsByMerchant: vi.fn(),
   };
 });
 
@@ -120,6 +126,8 @@ function createMerchantContext(
     merchantType: "physical" | "digital";
     commissionType: "fixed" | "percentage";
     commissionValue: number;
+    role: "sales_rep" | "supervisor" | "leader" | "manager";
+    overridePercentage: number | null;
   }> = {}
 ): TrpcContext {
   return {
@@ -133,11 +141,11 @@ function createMerchantContext(
       merchantType: overrides.merchantType ?? "physical",
       commission: 1000,
       digitalLevel: "1",
-      role: "sales_rep",
+      role: overrides.role ?? "sales_rep",
       parentId: null,
       commissionType: overrides.commissionType ?? "fixed",
       commissionValue: overrides.commissionValue ?? 1000,
-      overridePercentage: null,
+      overridePercentage: overrides.overridePercentage ?? null,
       canViewCosts: false,
       failedAttempts: 0,
       lockedUntil: null,
@@ -901,5 +909,104 @@ describe("Settlements", () => {
     const caller = appRouter.createCaller(ctx);
 
     await expect(caller.settlements.list({})).rejects.toThrow();
+  });
+});
+
+describe("Profit Settlement Payouts", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("should reject myBalance/myShareDetails/myPayouts for a merchant with no overridePercentage set", async () => {
+    // supervisor role but overridePercentage left null - the gate is on
+    // overridePercentage, not role (see routers.ts comment).
+    const ctx = createMerchantContext(7, { role: "supervisor", overridePercentage: null });
+    const caller = appRouter.createCaller(ctx);
+
+    await expect(caller.profitSettlements.myBalance()).rejects.toThrow();
+    await expect(caller.profitSettlements.myShareDetails()).rejects.toThrow();
+    await expect(caller.profitSettlements.myPayouts()).rejects.toThrow();
+    expect(db.getMerchantBalance).not.toHaveBeenCalled();
+  });
+
+  it("should scope myBalance to the session's own merchant id for a merchant holding an override share", async () => {
+    vi.mocked(db.getMerchantBalance).mockResolvedValue(4800);
+
+    const ctx = createMerchantContext(7, { role: "supervisor", overridePercentage: 30 });
+    const caller = appRouter.createCaller(ctx);
+    const result = await caller.profitSettlements.myBalance();
+
+    expect(result).toBe(4800);
+    expect(db.getMerchantBalance).toHaveBeenCalledWith(7);
+    expect(db.getMerchantBalance).not.toHaveBeenCalledWith(99);
+  });
+
+  it("should reject profitSettlements.balances and settlePayout for a non-admin caller", async () => {
+    const ctx = createMerchantContext(7, { role: "manager", overridePercentage: 10 });
+    const caller = appRouter.createCaller(ctx);
+
+    await expect(caller.profitSettlements.balances()).rejects.toThrow();
+    await expect(caller.profitSettlements.settlePayout({ merchantId: 7 })).rejects.toThrow();
+    expect(db.settleMerchantPayout).not.toHaveBeenCalled();
+  });
+
+  it("should settle a merchant's payout as admin, passing note through to db.settleMerchantPayout", async () => {
+    vi.mocked(db.settleMerchantPayout).mockResolvedValue({
+      id: 1, merchantId: 7, amount: "4800.00", proofUrl: null, note: "دفع نقدي", createdAt: new Date(),
+    } as any);
+
+    const ctx = createAdminContext();
+    const caller = appRouter.createCaller(ctx);
+    const result = await caller.profitSettlements.settlePayout({ merchantId: 7, note: "دفع نقدي" });
+
+    expect(db.settleMerchantPayout).toHaveBeenCalledWith(
+      expect.objectContaining({ merchantId: 7, note: "دفع نقدي" })
+    );
+    expect(result.id).toBe(1);
+  });
+
+  // db.settleMerchantPayout's own double-payment guard (throwing "لا يوجد
+  // رصيد مستحق لهذا التاجر" once every share is already linked to a payoutId)
+  // runs inside a real SQL transaction and isn't exercised by this mocked
+  // router-level suite - it can only be verified against a real database.
+  // This test only confirms the router surfaces that error to the caller
+  // rather than swallowing it.
+  it("should surface db.settleMerchantPayout's 'no outstanding balance' error to the caller", async () => {
+    vi.mocked(db.settleMerchantPayout).mockRejectedValue(new Error("لا يوجد رصيد مستحق لهذا التاجر"));
+
+    const ctx = createAdminContext();
+    const caller = appRouter.createCaller(ctx);
+
+    await expect(
+      caller.profitSettlements.settlePayout({ merchantId: 7 })
+    ).rejects.toThrow("لا يوجد رصيد مستحق لهذا التاجر");
+  });
+});
+
+describe("Profit Settlements - mySettlements (hidden from sales_rep)", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("should reject mySettlements for a sales_rep - own commission from hierarchical settlements is deliberately hidden from this role", async () => {
+    const ctx = createMerchantContext(7, { role: "sales_rep" });
+    const caller = appRouter.createCaller(ctx);
+
+    await expect(caller.profitSettlements.mySettlements()).rejects.toThrow();
+    expect(db.getProfitSettlementsByMerchant).not.toHaveBeenCalled();
+  });
+
+  it("should allow mySettlements for supervisor/leader/manager, scoped to their own merchant id", async () => {
+    vi.mocked(db.getProfitSettlementsByMerchant).mockResolvedValue([]);
+
+    for (const role of ["supervisor", "leader", "manager"] as const) {
+      vi.clearAllMocks();
+      vi.mocked(db.getProfitSettlementsByMerchant).mockResolvedValue([]);
+      const ctx = createMerchantContext(7, { role });
+      const caller = appRouter.createCaller(ctx);
+
+      await expect(caller.profitSettlements.mySettlements()).resolves.toEqual([]);
+      expect(db.getProfitSettlementsByMerchant).toHaveBeenCalledWith(7);
+    }
   });
 });

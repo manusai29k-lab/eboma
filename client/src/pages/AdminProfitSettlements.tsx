@@ -7,8 +7,11 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
-import { Percent, Eye, CheckCircle2, ImagePlus, AlertTriangle, Clock } from "lucide-react";
+import { Percent, Eye, CheckCircle2, ImagePlus, AlertTriangle, Wallet } from "lucide-react";
 import { ROLE_CONFIG } from "@/lib/merchantRoles";
+import { RoleBadge } from "@/components/RoleBadge";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Textarea } from "@/components/ui/textarea";
 import { toast } from "sonner";
 import { useState, useMemo, useRef } from "react";
 
@@ -102,26 +105,62 @@ export default function AdminProfitSettlements() {
   const breakdown = preview.data;
   const promotionCostValue = parseFloat(promotionCost) || 0;
 
-  // Draft settlements tab - lists every profitSettlements row still "draft"
-  // and lets the admin push it to "confirmed" via profitSettlements.confirm.
-  const draftSettlements = trpc.profitSettlements.list.useQuery({ status: "draft" }, { refetchOnWindowFocus: false });
-  const allMerchants = trpc.merchants.list.useQuery(undefined, { refetchOnWindowFocus: false });
-  const merchantNameMap = new Map(allMerchants.data?.map(m => [m.id, m.name]));
+  // Balances tab - every merchant currently holding (or having held) an
+  // ancestor override share, with a one-click payout that sweeps their
+  // entire current outstanding balance (see db.settleMerchantPayout).
+  const balances = trpc.profitSettlements.balances.useQuery(undefined, { refetchOnWindowFocus: false });
 
-  const confirmFinalMutation = trpc.profitSettlements.confirm.useMutation({
+  const [showSettleDialog, setShowSettleDialog] = useState(false);
+  const [settleMerchantId, setSettleMerchantId] = useState<number | null>(null);
+  const [settleMerchantName, setSettleMerchantName] = useState("");
+  const [settleAmount, setSettleAmount] = useState(0);
+  const [settleNote, setSettleNote] = useState("");
+  const [settleProofPreview, setSettleProofPreview] = useState<string | null>(null);
+  const [settleProofName, setSettleProofName] = useState<string | undefined>(undefined);
+  const settleFileInputRef = useRef<HTMLInputElement>(null);
+
+  const settlePayoutMutation = trpc.profitSettlements.settlePayout.useMutation({
     onSuccess: () => {
-      toast.success("تم تأكيد التسوية نهائياً");
-      utils.profitSettlements.list.invalidate();
+      toast.success("تمت تسوية الرصيد بنجاح");
+      setShowSettleDialog(false);
+      setSettleMerchantId(null);
+      setSettleNote("");
+      setSettleProofPreview(null);
+      setSettleProofName(undefined);
+      utils.profitSettlements.balances.invalidate();
     },
     onError: (error: any) => {
-      toast.error(error.message || "فشل التأكيد");
+      toast.error(error.message || "فشلت عملية تسوية الرصيد");
     },
   });
 
-  const handleConfirmFinal = (id: number) => {
-    if (confirm("هل أنت متأكد من التأكيد النهائي لهذه التسوية؟ لا يمكن التراجع.")) {
-      confirmFinalMutation.mutate({ id });
-    }
+  const openSettleDialog = (id: number, name: string, amount: number) => {
+    setSettleMerchantId(id);
+    setSettleMerchantName(name);
+    setSettleAmount(amount);
+    setSettleNote("");
+    setSettleProofPreview(null);
+    setSettleProofName(undefined);
+    setShowSettleDialog(true);
+  };
+
+  const handleSettleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setSettleProofName(file.name);
+    const reader = new FileReader();
+    reader.onload = (ev) => setSettleProofPreview(ev.target?.result as string);
+    reader.readAsDataURL(file);
+  };
+
+  const handleSettlePayout = () => {
+    if (!settleMerchantId) return;
+    settlePayoutMutation.mutate({
+      merchantId: settleMerchantId,
+      note: settleNote || undefined,
+      proofBase64: settleProofName ? (settleProofPreview ?? undefined) : undefined,
+      proofName: settleProofName,
+    });
   };
 
   return (
@@ -139,9 +178,9 @@ export default function AdminProfitSettlements() {
             <Percent className="w-4 h-4 ms-2" />
             إنشاء تسوية جديدة
           </TabsTrigger>
-          <TabsTrigger value="drafts">
-            <Clock className="w-4 h-4 ms-2" />
-            التسويات المعلّقة ({draftSettlements.data?.length ?? 0})
+          <TabsTrigger value="balances">
+            <Wallet className="w-4 h-4 ms-2" />
+            أرصدة التجار
           </TabsTrigger>
         </TabsList>
 
@@ -344,10 +383,10 @@ export default function AdminProfitSettlements() {
       )}
         </TabsContent>
 
-        <TabsContent value="drafts">
+        <TabsContent value="balances">
           <Card className="shadow-sm">
             <CardHeader>
-              <CardTitle className="text-lg">التسويات بحالة "مسودة"</CardTitle>
+              <CardTitle className="text-lg">أرصدة أصحاب الحصص بالهيكل التنظيمي</CardTitle>
             </CardHeader>
             <CardContent className="p-0">
               <div className="overflow-x-auto">
@@ -355,43 +394,35 @@ export default function AdminProfitSettlements() {
                   <TableHeader>
                     <TableRow>
                       <TableHead>التاجر</TableHead>
-                      <TableHead>الفترة</TableHead>
-                      <TableHead>صافي الربح</TableHead>
-                      <TableHead>حصة التاجر</TableHead>
-                      <TableHead>حصة الشركة</TableHead>
-                      <TableHead>تاريخ الإنشاء</TableHead>
+                      <TableHead>الرتبة</TableHead>
+                      <TableHead>الرصيد الحالي</TableHead>
                       <TableHead>إجراء</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {draftSettlements.data?.map(s => (
-                      <TableRow key={s.id}>
-                        <TableCell>{merchantNameMap.get(s.merchantId) ?? "—"}</TableCell>
-                        <TableCell className="text-xs text-muted-foreground">
-                          {new Date(s.periodStart).toLocaleDateString("ar-IQ")} - {new Date(s.periodEnd).toLocaleDateString("ar-IQ")}
-                        </TableCell>
-                        <TableCell>{Number(s.netProfit).toLocaleString()} د.ع</TableCell>
-                        <TableCell className="font-semibold text-emerald-600">{Number(s.merchantShare).toLocaleString()} د.ع</TableCell>
-                        <TableCell className="font-semibold text-amber-600">{Number(s.companyShare).toLocaleString()} د.ع</TableCell>
-                        <TableCell className="text-xs text-muted-foreground">{new Date(s.createdAt).toLocaleDateString("ar-IQ")}</TableCell>
+                    {balances.data?.map(m => (
+                      <TableRow key={m.id}>
+                        <TableCell>{m.name}</TableCell>
+                        <TableCell><RoleBadge role={m.role} /></TableCell>
+                        <TableCell className="font-semibold text-primary">{m.balance.toLocaleString()} د.ع</TableCell>
                         <TableCell>
                           <Button
                             size="sm"
                             variant="outline"
-                            onClick={() => handleConfirmFinal(s.id)}
-                            disabled={confirmFinalMutation.isPending}
+                            disabled={m.balance <= 0}
+                            onClick={() => openSettleDialog(m.id, m.name, m.balance)}
                             className="gap-1"
                           >
-                            <CheckCircle2 className="w-3.5 h-3.5" />
-                            تأكيد نهائي
+                            <Wallet className="w-3.5 h-3.5" />
+                            تسوية الرصيد
                           </Button>
                         </TableCell>
                       </TableRow>
                     ))}
-                    {draftSettlements.data?.length === 0 && (
+                    {balances.data?.length === 0 && (
                       <TableRow>
-                        <TableCell colSpan={7} className="text-center text-muted-foreground py-8">
-                          لا توجد تسويات معلّقة حالياً
+                        <TableCell colSpan={4} className="text-center text-muted-foreground py-8">
+                          لا يوجد أصحاب حصص حالياً
                         </TableCell>
                       </TableRow>
                     )}
@@ -402,6 +433,65 @@ export default function AdminProfitSettlements() {
           </Card>
         </TabsContent>
       </Tabs>
+
+      {/* Settle Payout Dialog */}
+      <Dialog open={showSettleDialog} onOpenChange={setShowSettleDialog}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>تسوية الرصيد</DialogTitle>
+            <DialogDescription>
+              تسوية رصيد التاجر: <strong>{settleMerchantName}</strong>
+              <br />
+              سيتم اعتبار كامل الرصيد الحالي مدفوعاً بالكامل، ولا يمكن التراجع عن هذه العملية.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div className="p-3 rounded-lg bg-primary/5 border border-primary/20">
+              <p className="text-sm font-semibold">المبلغ الذي سيتم تسليمه:</p>
+              <p className="text-2xl font-bold text-primary">{settleAmount.toLocaleString()} د.ع</p>
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="settle-note">ملاحظة (اختياري)</Label>
+              <Textarea
+                id="settle-note"
+                placeholder="مثال: تم التسليم نقداً بتاريخ ..."
+                value={settleNote}
+                onChange={(e) => setSettleNote(e.target.value)}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label>صورة إثبات الدفع (اختياري)</Label>
+              <div
+                className="border-2 border-dashed rounded-xl p-4 text-center cursor-pointer hover:border-primary/50 transition-colors"
+                onClick={() => settleFileInputRef.current?.click()}
+              >
+                {settleProofPreview ? (
+                  <img src={settleProofPreview} alt="معاينة إثبات الدفع" className="max-h-32 mx-auto rounded-lg" />
+                ) : (
+                  <div className="py-3">
+                    <ImagePlus className="w-6 h-6 mx-auto text-muted-foreground mb-1" />
+                    <p className="text-sm text-muted-foreground">اضغط لرفع صورة إثبات</p>
+                  </div>
+                )}
+                <input ref={settleFileInputRef} type="file" accept="image/*" className="hidden" onChange={handleSettleFileChange} />
+              </div>
+            </div>
+            <DialogFooter>
+              <Button type="button" variant="outline" onClick={() => setShowSettleDialog(false)}>
+                إلغاء
+              </Button>
+              <Button
+                type="button"
+                onClick={handleSettlePayout}
+                disabled={settlePayoutMutation.isPending}
+                className="gap-2"
+              >
+                {settlePayoutMutation.isPending ? "جاري التسوية..." : (<><Wallet className="w-4 h-4" /> تأكيد التسوية</>)}
+              </Button>
+            </DialogFooter>
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

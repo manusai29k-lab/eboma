@@ -310,8 +310,31 @@ export const profitSettlementShares = mysqlTable("profit_settlement_shares", {
   role: mysqlEnum("role", ["sales_rep", "supervisor", "leader", "manager"]).notNull(),
   overridePercentage: int("overridePercentage").notNull(),
   shareAmount: decimal("shareAmount", { precision: 14, scale: 2 }).notNull(),
+  // -> profitSettlementPayouts.id, no FK. NULL = still outstanding (counts
+  // toward the ancestor's current balance); set once when swept into a
+  // payout by db.settleMerchantPayout, never unset.
+  payoutId: int("payoutId"),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
 });
 
 export type ProfitSettlementShare = typeof profitSettlementShares.$inferSelect;
 export type InsertProfitSettlementShare = typeof profitSettlementShares.$inferInsert;
+
+/**
+ * One row per admin-initiated payout: sweeps every currently-outstanding
+ * profitSettlementShares row for a merchant (payoutId IS NULL) into a single
+ * payment record, atomically stamping payoutId onto all of them (see
+ * db.settleMerchantPayout). amount is the frozen sum at payout time, not
+ * recomputed later.
+ */
+export const profitSettlementPayouts = mysqlTable("profit_settlement_payouts", {
+  id: int("id").autoincrement().primaryKey(),
+  merchantId: int("merchantId").notNull(),
+  amount: decimal("amount", { precision: 14, scale: 2 }).notNull(),
+  proofUrl: varchar("proofUrl", { length: 500 }),
+  note: text("note"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+
+export type ProfitSettlementPayout = typeof profitSettlementPayouts.$inferSelect;
+export type InsertProfitSettlementPayout = typeof profitSettlementPayouts.$inferInsert;

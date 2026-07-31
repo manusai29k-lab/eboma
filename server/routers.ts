@@ -102,6 +102,24 @@ async function uploadPromotionProofImage(base64?: string, name?: string): Promis
   }
 }
 
+// Same base64-upload pattern as uploadPromotionProofImage above, for
+// profitSettlementPayouts.proofUrl - admin uploads an optional proof-of-payment
+// image when settling a merchant's outstanding balance. No imageKey needed
+// here either (never deleted/replaced afterward).
+async function uploadPayoutProofImage(base64?: string, name?: string): Promise<{ url?: string }> {
+  if (!base64 || !name) return {};
+  try {
+    const base64Data = base64.split(",")[1] || base64;
+    const buffer = Buffer.from(base64Data, "base64");
+    const ext = name.split(".").pop() || "jpg";
+    const result = await storagePut(`payout-proofs/${Date.now()}.${ext}`, buffer, `image/${ext}`);
+    return { url: result.url };
+  } catch (error) {
+    console.error("[ProfitSettlement] Failed to upload payout proof image:", error);
+    return {};
+  }
+}
+
 export const appRouter = router({
   system: systemRouter,
 
@@ -175,6 +193,11 @@ export const appRouter = router({
           username: merchant.username,
           merchantType: merchant.merchantType,
           role: merchant.role,
+          // Own override percentage - needed client-side to decide whether
+          // to show the "رصيدي الحالي" balance section at all (mirrors the
+          // profitSettlements.myBalance/myShareDetails/myPayouts server-side
+          // gate). Safe to expose - it's the merchant's own value.
+          overridePercentage: merchant.overridePercentage,
         };
       } catch {
         return null;
@@ -639,9 +662,13 @@ export const appRouter = router({
 
   // ==================== Profit Settlements (hierarchy commission system) ====================
   // Fully separate from `settlements` above - new sales_rep/supervisor/leader/
-  // manager hierarchy flow. create/list/confirm stay admin-only (promotionCost
-  // is admin-entered by design); mySettlements/mySubordinates/subordinatesSummary
-  // below are the merchant-facing, role-gated views onto the same data.
+  // manager hierarchy flow. create/list/balances/settlePayout stay admin-only
+  // (promotionCost is admin-entered by design); mySettlements/mySubordinates/
+  // subordinatesSummary/myBalance/myShareDetails/myPayouts below are the
+  // merchant-facing, role-gated views onto the same data. Every settlement is
+  // created directly as "confirmed" (see db.createProfitSettlement) - the
+  // admin's "معاينة" preview step before calling create already serves as the
+  // review gate, so there's no separate draft->confirm transition anymore.
   profitSettlements: router({
     // grossProfit is no longer a client input - db.createProfitSettlement
     // derives it from delivered physicalOrders.grossProfitAtOrderTime within
@@ -704,18 +731,43 @@ export const appRouter = router({
         return await db.getFilteredProfitSettlements(input);
       }),
 
-    confirm: appAdminProcedure
-      .input(z.object({ id: z.number() }))
+    // Admin-only, read-only: every merchant currently holding (or having
+    // ever held) an ancestor override share, with their current outstanding
+    // balance - powers the "أرصدة التجار" admin table.
+    balances: appAdminProcedure.query(async () => {
+      return await db.getMerchantsWithOverrideBalances();
+    }),
+
+    // Admin-only: sweeps a merchant's entire current outstanding balance into
+    // one payout record (see db.settleMerchantPayout for the double-payment
+    // guard). proofBase64/proofName are optional, uploaded the same way as
+    // promotionProofBase64/promotionProofName on create above.
+    settlePayout: appAdminProcedure
+      .input(z.object({
+        merchantId: z.number(),
+        note: z.string().max(1000).optional(),
+        proofBase64: z.string().optional(),
+        proofName: z.string().optional(),
+      }))
       .mutation(async ({ input }) => {
-        await db.confirmProfitSettlement(input.id);
-        return { success: true };
+        const { proofBase64, proofName, ...rest } = input;
+        const { url } = await uploadPayoutProofImage(proofBase64, proofName);
+        return await db.settleMerchantPayout({ ...rest, proofUrl: url });
       }),
 
     // Merchant-facing: own profit settlements. Uses ctx.merchant.id only -
     // never a client-supplied merchantId (same IDOR-safe convention as
-    // physicalOrders.myOrders). grossProfit/promotionCost are masked out
-    // unless the viewer is the sales_rep themself.
+    // physicalOrders.myOrders). Rejected outright for sales_rep - this is
+    // their own commission from being swept into a hierarchical settlement,
+    // but the product decision is to hide it entirely from this role (no
+    // other surface currently exposes it - MerchantEarnings.tsx deliberately
+    // excludes hierarchical profit settlements). Not an IDOR fix (this was
+    // always scoped to the caller's own id) - a deliberate business-rule
+    // gate, defense-in-depth against the client-side hide in MerchantTeam.tsx.
     mySettlements: merchantProcedure.query(async ({ ctx }) => {
+      if (ctx.merchant.role === "sales_rep") {
+        throw new TRPCError({ code: "FORBIDDEN", message: "هذه البيانات غير متاحة لمندوب المبيعات" });
+      }
       const rows = await db.getProfitSettlementsByMerchant(ctx.merchant.id);
       return rows.map(row => db.maskProfitSettlementForRole(row, ctx.merchant.role));
     }),
@@ -743,6 +795,39 @@ export const appRouter = router({
         throw new TRPCError({ code: "FORBIDDEN", message: "هذه البيانات متاحة فقط للمدير" });
       }
       return await db.getSubordinatesSummary(ctx.merchant.id);
+    }),
+
+    // Merchant-facing: own current outstanding balance as an ancestor
+    // (supervisor/leader/manager). Gated on overridePercentage being set
+    // rather than role !== sales_rep - a merchant whose overridePercentage
+    // was later cleared has nothing to show here, regardless of role.
+    myBalance: merchantProcedure.query(async ({ ctx }) => {
+      if (ctx.merchant.overridePercentage === null) {
+        throw new TRPCError({ code: "FORBIDDEN", message: "هذه البيانات متاحة فقط لأصحاب حصة إضافية بالهيكل التنظيمي" });
+      }
+      return await db.getMerchantBalance(ctx.merchant.id);
+    }),
+
+    // Merchant-facing: full breakdown of own shares (paid/unpaid/all),
+    // including the promotion-cost/proof and per-order cost detail of the
+    // settlements that produced them - see db.getMerchantShareDetails for
+    // why this intentionally bypasses the usual grossProfit/promotionCost
+    // masking (the viewer here is the share owner, not a bystander).
+    myShareDetails: merchantProcedure
+      .input(z.object({ filter: z.enum(["paid", "unpaid"]).optional() }).optional())
+      .query(async ({ ctx, input }) => {
+        if (ctx.merchant.overridePercentage === null) {
+          throw new TRPCError({ code: "FORBIDDEN", message: "هذه البيانات متاحة فقط لأصحاب حصة إضافية بالهيكل التنظيمي" });
+        }
+        return await db.getMerchantShareDetails(ctx.merchant.id, input?.filter);
+      }),
+
+    // Merchant-facing: own payout history.
+    myPayouts: merchantProcedure.query(async ({ ctx }) => {
+      if (ctx.merchant.overridePercentage === null) {
+        throw new TRPCError({ code: "FORBIDDEN", message: "هذه البيانات متاحة فقط لأصحاب حصة إضافية بالهيكل التنظيمي" });
+      }
+      return await db.getPayoutsByMerchant(ctx.merchant.id);
     }),
   }),
 

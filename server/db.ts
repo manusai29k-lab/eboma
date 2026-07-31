@@ -11,6 +11,7 @@ import {
   Settlement, settlements,
   ProfitSettlement, profitSettlements,
   ProfitSettlementShare, profitSettlementShares,
+  ProfitSettlementPayout, profitSettlementPayouts,
 } from "../drizzle/schema";
 import { ENV } from './_core/env';
 import { checkParentAssignment } from "@shared/merchantHierarchy";
@@ -1066,6 +1067,13 @@ export async function createProfitSettlement(input: {
       netProfit: shares.netProfit.toFixed(2),
       merchantShare: shares.merchantShare.toFixed(2),
       companyShare: shares.companyShare.toFixed(2),
+      // Created directly as confirmed - the admin's "معاينة" (preview) step
+      // before calling this already serves as the review gate, so the old
+      // separate draft->confirm transition (profitSettlements.confirm) is
+      // gone. Existing pre-this-change rows left in "draft" stay there
+      // permanently and are intentionally excluded from balance/payout
+      // calculations (see getMerchantBalance).
+      status: "confirmed",
     });
 
     const [created] = await tx.select().from(profitSettlements)
@@ -1107,12 +1115,6 @@ export async function getFilteredProfitSettlements(filters: {
   return await db.select().from(profitSettlements).where(and(...conditions)).orderBy(desc(profitSettlements.createdAt));
 }
 
-export async function confirmProfitSettlement(id: number): Promise<void> {
-  const db = await getDb();
-  if (!db) throw new Error("Database not available");
-  await db.update(profitSettlements).set({ status: "confirmed" }).where(eq(profitSettlements.id, id));
-}
-
 export async function getProfitSettlementsByMerchant(merchantId: number): Promise<ProfitSettlement[]> {
   const db = await getDb();
   if (!db) return [];
@@ -1126,14 +1128,19 @@ export type MaskedProfitSettlement = Omit<ProfitSettlement, "grossProfit" | "pro
   promotionCost: string | null;
 };
 
-// grossProfit/promotionCost are admin-entered and only meaningful to the
-// sales_rep who generated them - everyone above (supervisor/leader/manager)
-// only ever sees the computed shares, never the raw inputs.
+// grossProfit/promotionCost are admin-entered internal financial data -
+// masked out for every merchant-facing viewer, no exceptions. Previously
+// passed through unmasked for the sales_rep who generated them, but
+// routers.ts profitSettlements.mySettlements (the only caller that could
+// ever pass "sales_rep" here) now rejects sales_rep outright before reaching
+// this function - mySubordinates (the other caller) never passes sales_rep
+// as viewerRole either. viewerRole is kept in the signature for callers to
+// stay explicit about whose perspective is being masked, even though every
+// current caller now always masks.
 export function maskProfitSettlementForRole(
   row: ProfitSettlement,
   viewerRole: Merchant["role"],
 ): MaskedProfitSettlement {
-  if (viewerRole === "sales_rep") return row;
   return { ...row, grossProfit: null, promotionCost: null };
 }
 
@@ -1227,6 +1234,243 @@ export async function getSubordinatesSummary(managerId: number): Promise<Subordi
     totalManagerOverrideShare,
     totalCompanyShare,
   };
+}
+
+// ==================== Merchant Balance / Payouts ====================
+// profitSettlementShares rows are the ledger: payoutId IS NULL means still
+// outstanding (counts toward the ancestor's current balance), non-null means
+// already swept into that payout row. Every query here additionally requires
+// the parent profitSettlements.status = "confirmed" - the two legacy rows
+// left over from the old draft/confirm flow (before this system existed)
+// never got confirmed and are intentionally excluded from balances/payouts
+// permanently, unless someone manually updates their status later.
+
+// Current outstanding balance for one ancestor (supervisor/leader/manager) -
+// sum of every not-yet-paid share from confirmed settlements.
+export async function getMerchantBalance(merchantId: number): Promise<number> {
+  const db = await getDb();
+  if (!db) return 0;
+  const [row] = await db.select({ total: sum(profitSettlementShares.shareAmount) })
+    .from(profitSettlementShares)
+    .innerJoin(profitSettlements, eq(profitSettlementShares.settlementId, profitSettlements.id))
+    .where(and(
+      eq(profitSettlementShares.merchantId, merchantId),
+      isNull(profitSettlementShares.payoutId),
+      eq(profitSettlements.status, "confirmed"),
+    ));
+  return row?.total ? parseFloat(row.total as unknown as string) : 0;
+}
+
+// Admin-only: every merchant who currently holds (or has ever held) an
+// ancestor share, with their current outstanding balance - powers the
+// "أرصدة التجار" admin table. Two independent eligibility paths, since a
+// merchant's overridePercentage can be cleared later while old shares still
+// exist: (a) role !== sales_rep and overridePercentage is currently set, or
+// (b) has at least one historical profitSettlementShares row regardless of
+// current role/overridePercentage.
+export async function getMerchantsWithOverrideBalances(): Promise<Array<Merchant & { balance: number }>> {
+  const db = await getDb();
+  if (!db) return [];
+
+  const allMerchants = await db.select().from(merchants);
+  const shareMerchantRows = await db.selectDistinct({ merchantId: profitSettlementShares.merchantId }).from(profitSettlementShares);
+  const shareMerchantIds = new Set(shareMerchantRows.map(r => r.merchantId));
+
+  const eligible = allMerchants.filter(m =>
+    (m.role !== "sales_rep" && m.overridePercentage != null) || shareMerchantIds.has(m.id)
+  );
+  if (eligible.length === 0) return [];
+
+  const balanceRows = await db.select({
+    merchantId: profitSettlementShares.merchantId,
+    total: sum(profitSettlementShares.shareAmount),
+  })
+    .from(profitSettlementShares)
+    .innerJoin(profitSettlements, eq(profitSettlementShares.settlementId, profitSettlements.id))
+    .where(and(
+      isNull(profitSettlementShares.payoutId),
+      eq(profitSettlements.status, "confirmed"),
+    ))
+    .groupBy(profitSettlementShares.merchantId);
+  const balanceByMerchantId = new Map(balanceRows.map(r => [r.merchantId, r.total ? parseFloat(r.total as unknown as string) : 0]));
+
+  return eligible.map(m => ({ ...m, balance: balanceByMerchantId.get(m.id) ?? 0 }));
+}
+
+// Atomically sweeps every currently-outstanding share for a merchant into one
+// new payout row, stamping payoutId onto all of them so they can never be
+// paid again - same insert-then-read-back transaction pattern as
+// createSettlement/createProfitSettlement (mysql2/drizzle insert doesn't
+// return the row directly). proofUrl is already-uploaded by the caller (see
+// uploadPayoutProofImage in routers.ts), db.ts never talks to storage
+// directly.
+export async function settleMerchantPayout(input: {
+  merchantId: number;
+  note?: string;
+  proofUrl?: string;
+}): Promise<ProfitSettlementPayout> {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+
+  return await db.transaction(async (tx) => {
+    const rows = await tx.select({
+      id: profitSettlementShares.id,
+      shareAmount: profitSettlementShares.shareAmount,
+    }).from(profitSettlementShares)
+      .innerJoin(profitSettlements, eq(profitSettlementShares.settlementId, profitSettlements.id))
+      .where(and(
+        eq(profitSettlementShares.merchantId, input.merchantId),
+        isNull(profitSettlementShares.payoutId),
+        eq(profitSettlements.status, "confirmed"),
+      ));
+
+    const total = rows.reduce((acc, r) => acc + parseFloat(r.shareAmount), 0);
+    if (total <= 0) {
+      throw new Error("لا يوجد رصيد مستحق لهذا التاجر");
+    }
+
+    await tx.insert(profitSettlementPayouts).values({
+      merchantId: input.merchantId,
+      amount: total.toFixed(2),
+      proofUrl: input.proofUrl,
+      note: input.note,
+    });
+
+    const [created] = await tx.select().from(profitSettlementPayouts)
+      .where(eq(profitSettlementPayouts.merchantId, input.merchantId))
+      .orderBy(desc(profitSettlementPayouts.id)).limit(1);
+
+    await tx.update(profitSettlementShares)
+      .set({ payoutId: created.id })
+      .where(inArray(profitSettlementShares.id, rows.map(r => r.id)));
+
+    return created;
+  });
+}
+
+export async function getPayoutsByMerchant(merchantId: number): Promise<ProfitSettlementPayout[]> {
+  const db = await getDb();
+  if (!db) return [];
+  return await db.select().from(profitSettlementPayouts)
+    .where(eq(profitSettlementPayouts.merchantId, merchantId))
+    .orderBy(desc(profitSettlementPayouts.createdAt));
+}
+
+export interface MerchantShareDetail {
+  shareId: number;
+  shareAmount: number;
+  overridePercentage: number;
+  role: Merchant["role"];
+  payoutId: number | null;
+  settlement: {
+    id: number;
+    periodStart: Date;
+    periodEnd: Date;
+    promotionCost: number;
+    promotionProofUrl: string | null;
+    netProfit: number;
+    grossProfit: number;
+    sourceMerchantId: number;
+    sourceMerchantName: string;
+  };
+  orders: Array<{
+    id: number;
+    productType: string;
+    quantity: number;
+    totalPrice: number;
+    wholesaleCostAtOrderTime: number;
+    deliveryCostAtOrderTime: number;
+    grossProfitAtOrderTime: number;
+    commissionAtOrderTime: number;
+    merchantName: string;
+  }>;
+  orderCount: number;
+  distinctMerchantCount: number;
+  totalCommission: number;
+}
+
+// Full breakdown of every share this ancestor holds (paid and/or unpaid),
+// including the originating settlement's promotion-cost/proof and every
+// contributing order's cost/profit detail - deliberately bypasses
+// maskProfitSettlementForRole's usual grossProfit/promotionCost masking,
+// since here the viewer is the share owner looking at their own accrued
+// dues, not a bystander viewing someone else's settlement.
+export async function getMerchantShareDetails(
+  merchantId: number,
+  filter?: "paid" | "unpaid",
+): Promise<MerchantShareDetail[]> {
+  const db = await getDb();
+  if (!db) return [];
+
+  const conditions = [eq(profitSettlementShares.merchantId, merchantId)];
+  if (filter === "unpaid") conditions.push(isNull(profitSettlementShares.payoutId));
+  if (filter === "paid") conditions.push(sql`${profitSettlementShares.payoutId} IS NOT NULL`);
+  conditions.push(eq(profitSettlements.status, "confirmed"));
+
+  const shareRows = await db.select({
+    shareId: profitSettlementShares.id,
+    shareAmount: profitSettlementShares.shareAmount,
+    overridePercentage: profitSettlementShares.overridePercentage,
+    role: profitSettlementShares.role,
+    payoutId: profitSettlementShares.payoutId,
+    settlement: profitSettlements,
+  })
+    .from(profitSettlementShares)
+    .innerJoin(profitSettlements, eq(profitSettlementShares.settlementId, profitSettlements.id))
+    .where(and(...conditions))
+    .orderBy(desc(profitSettlements.periodEnd));
+
+  const result: MerchantShareDetail[] = [];
+  for (const row of shareRows) {
+    const sourceMerchant = await getMerchantById(row.settlement.merchantId);
+    const orderRows = await db.select({
+      id: physicalOrders.id,
+      productType: physicalOrders.productType,
+      quantity: physicalOrders.quantity,
+      totalPrice: physicalOrders.totalPrice,
+      wholesaleCostAtOrderTime: physicalOrders.wholesaleCostAtOrderTime,
+      deliveryCostAtOrderTime: physicalOrders.deliveryCostAtOrderTime,
+      grossProfitAtOrderTime: physicalOrders.grossProfitAtOrderTime,
+      commissionAtOrderTime: physicalOrders.commissionAtOrderTime,
+      merchantName: physicalOrders.merchantName,
+      merchantId: physicalOrders.merchantId,
+    }).from(physicalOrders).where(eq(physicalOrders.profitSettlementId, row.settlement.id));
+
+    result.push({
+      shareId: row.shareId,
+      shareAmount: parseFloat(row.shareAmount),
+      overridePercentage: row.overridePercentage,
+      role: row.role,
+      payoutId: row.payoutId,
+      settlement: {
+        id: row.settlement.id,
+        periodStart: row.settlement.periodStart,
+        periodEnd: row.settlement.periodEnd,
+        promotionCost: parseFloat(row.settlement.promotionCost),
+        promotionProofUrl: row.settlement.promotionProofUrl,
+        netProfit: parseFloat(row.settlement.netProfit),
+        grossProfit: parseFloat(row.settlement.grossProfit),
+        sourceMerchantId: row.settlement.merchantId,
+        sourceMerchantName: sourceMerchant?.name ?? "—",
+      },
+      orders: orderRows.map(o => ({
+        id: o.id,
+        productType: o.productType,
+        quantity: o.quantity,
+        totalPrice: o.totalPrice,
+        wholesaleCostAtOrderTime: o.wholesaleCostAtOrderTime,
+        deliveryCostAtOrderTime: o.deliveryCostAtOrderTime,
+        grossProfitAtOrderTime: o.grossProfitAtOrderTime,
+        commissionAtOrderTime: o.commissionAtOrderTime,
+        merchantName: o.merchantName,
+      })),
+      orderCount: orderRows.length,
+      distinctMerchantCount: new Set(orderRows.map(o => o.merchantId)).size,
+      totalCommission: orderRows.reduce((acc, o) => acc + o.commissionAtOrderTime, 0),
+    });
+  }
+
+  return result;
 }
 
 // ==================== Dashboard Stats ====================

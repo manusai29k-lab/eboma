@@ -6,7 +6,9 @@
       "PowerShell(Copy-Item *)",
       "PowerShell(Get-Command *)",
       "PowerShell(npm view)",
-      "Bash(npx vitest *)"
+      "Bash(npx vitest *)",
+      "Bash(pnpm db:push)",
+      "Bash(pnpm run *)"
     ]
   }
 }

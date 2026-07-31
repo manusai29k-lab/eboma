@@ -71,6 +71,13 @@
       "when": 1785414551546,
       "tag": "0009_skinny_colossus",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "5",
+      "when": 1785495309091,
+      "tag": "0010_silky_talon",
+      "breakpoints": true
     }
   ]
 }
