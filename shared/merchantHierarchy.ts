@@ -31,7 +31,7 @@ export function checkParentAssignment(
       return { allowed: false, reason: "supervisorRejectsRole" };
 
     case "leader":
-      return childRole === "supervisor" || childRole === "leader"
+      return childRole !== "manager"
         ? { allowed: true }
         : { allowed: false, reason: "leaderRejectsRole" };
 

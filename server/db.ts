@@ -107,7 +107,7 @@ const PARENT_ASSIGNMENT_ERROR_MESSAGES: Record<
   parentIsSalesRep: "مندوب المبيعات لا يقبل أي تابع",
   supervisorCommissionTooHigh: "لا يمكن أن تكون عمولة المشرف التابع أعلى من عمولة المشرف الذي يتبع له",
   supervisorRejectsRole: "المشرف يقبل فقط مندوبي مبيعات، أو مشرفين آخرين بعمولة لا تتجاوز عمولته",
-  leaderRejectsRole: "القائد يقبل فقط مشرفين أو قادة آخرين كتابعين",
+  leaderRejectsRole: "القائد لا يقبل مدير التجار كتابع",
 };
 
 // Thin wrapper around checkParentAssignment (shared/merchantHierarchy.ts) -
