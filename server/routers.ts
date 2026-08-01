@@ -298,7 +298,7 @@ export const appRouter = router({
           totalPrice,
           // Freeze the merchant's commission as it stands right now — a later
           // commission change must never retroactively change this order.
-          commissionAtOrderTime: db.computeFrozenCommission(ctx.merchant.commissionType, ctx.merchant.commissionValue, totalPrice),
+          commissionAtOrderTime: db.computeFrozenCommission(ctx.merchant.commissionType, ctx.merchant.commissionValue, totalPrice, input.quantity),
           ...costs,
         });
         // Notify owner
@@ -409,7 +409,7 @@ export const appRouter = router({
           proofImageUrl,
           // Freeze the merchant's commission as it stands right now — a later
           // commission change must never retroactively change this sale.
-          commissionAtSaleTime: db.computeFrozenCommission(ctx.merchant.commissionType, ctx.merchant.commissionValue, input.productPrice),
+          commissionAtSaleTime: db.computeFrozenCommission(ctx.merchant.commissionType, ctx.merchant.commissionValue, input.productPrice, 1),
         });
 
         // Notify owner

@@ -2013,8 +2013,9 @@ export function computeFrozenCommission(
   commissionType: "fixed" | "percentage",
   commissionValue: number,
   baseAmount: number,
+  quantity: number,
 ): number {
-  return commissionType === "fixed" ? commissionValue : Math.floor(baseAmount * (commissionValue / 100));
+  return commissionType === "fixed" ? commissionValue * quantity : Math.floor(baseAmount * (commissionValue / 100));
 }
 
 // Freezes a physical order's cost/profit snapshot from its linked catalog
