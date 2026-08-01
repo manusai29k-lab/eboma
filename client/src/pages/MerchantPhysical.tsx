@@ -5,6 +5,7 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { ImageLightbox } from "@/components/ImageLightbox";
 import { useLocation } from "wouter";
 import { ArrowRight, Package, Loader2, Info, Plus, ImageOff, Pencil, Search } from "lucide-react";
 import { toast } from "sonner";
@@ -266,7 +267,7 @@ export default function MerchantPhysical() {
               filteredCatalog.map((product) => (
                 <div key={product.id} className="rounded-xl bg-white/[0.03] border border-white/10 p-3 flex flex-col items-center text-center gap-2">
                   {product.imageUrl ? (
-                    <img src={product.imageUrl} alt={product.name} className="w-16 h-16 rounded-lg object-cover" />
+                    <ImageLightbox src={product.imageUrl} alt={product.name} className="w-16 h-16 rounded-lg object-cover" />
                   ) : (
                     <div className="w-16 h-16 rounded-lg bg-white/10 flex items-center justify-center">
                       <ImageOff className="w-6 h-6 text-white/30" />
