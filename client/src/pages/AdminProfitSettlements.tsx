@@ -738,6 +738,7 @@ export default function AdminProfitSettlements() {
                       <TableHead>التاريخ</TableHead>
                       <TableHead>الملاحظة</TableHead>
                       <TableHead>صورة إثبات الدفع</TableHead>
+                      <TableHead>صورة إثبات الترويج</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
@@ -753,11 +754,16 @@ export default function AdminProfitSettlements() {
                             <ImageLightbox src={p.proofUrl} alt="إثبات الدفع" className="max-h-12 rounded-lg border" />
                           ) : "—"}
                         </TableCell>
+                        <TableCell>
+                          {p.promotionProofUrl ? (
+                            <ImageLightbox src={p.promotionProofUrl} alt="إثبات الترويج" className="max-h-12 rounded-lg border" />
+                          ) : "—"}
+                        </TableCell>
                       </TableRow>
                     ))}
                     {allPayouts.data?.length === 0 && (
                       <TableRow>
-                        <TableCell colSpan={6} className="text-center text-muted-foreground py-8">
+                        <TableCell colSpan={7} className="text-center text-muted-foreground py-8">
                           لا توجد دفعات مسجّلة بعد
                         </TableCell>
                       </TableRow>

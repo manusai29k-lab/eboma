@@ -238,6 +238,11 @@ export default function MerchantTeam() {
                       </div>
                       <div className="flex items-center gap-3">
                         {p.proofUrl && <ImageLightbox src={p.proofUrl} alt="إثبات الدفع" className="max-h-12 rounded-lg border border-white/10" />}
+                        {/* promotionProofUrl exists only on the unmasked
+                            branch (canViewCosts=true) - checked via 'in'. */}
+                        {'promotionProofUrl' in p && p.promotionProofUrl && (
+                          <ImageLightbox src={p.promotionProofUrl} alt="إثبات الترويج" className="max-h-12 rounded-lg border border-white/10" />
+                        )}
                         <p className="text-lg font-bold text-emerald-300">{formatMoney(p.amount)} د.ع</p>
                       </div>
                     </div>

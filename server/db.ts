@@ -1607,12 +1607,84 @@ export async function settleSingleShare(input: {
   });
 }
 
-export async function getPayoutsByMerchant(merchantId: number): Promise<ProfitSettlementPayout[]> {
+// Resolves, for each payoutId, the ORIGINATING settlement's
+// promotionProofUrl - but ONLY when that payout maps to exactly one
+// profitSettlementShares row (one settlement). settleSingleShare always
+// links exactly one share to its payout, so those always resolve.
+// settleMerchantPayout can link several shares (sweeping multiple
+// outstanding settlements at once) - genuinely ambiguous which proof to
+// show, so those resolve to null rather than guessing. Batched (two IN
+// queries total) rather than per-payout, to avoid an N+1 loop.
+async function resolvePayoutPromotionProofUrls(payoutIds: number[]): Promise<Map<number, string | null>> {
+  const result = new Map<number, string | null>();
+  if (payoutIds.length === 0) return result;
+
+  const db = await getDb();
+  if (!db) return result;
+
+  const shareRows = await db.select({
+    payoutId: profitSettlementShares.payoutId,
+    settlementId: profitSettlementShares.settlementId,
+  }).from(profitSettlementShares).where(inArray(profitSettlementShares.payoutId, payoutIds));
+
+  const settlementIdsByPayoutId = new Map<number, number[]>();
+  for (const row of shareRows) {
+    if (row.payoutId == null) continue;
+    const list = settlementIdsByPayoutId.get(row.payoutId) ?? [];
+    list.push(row.settlementId);
+    settlementIdsByPayoutId.set(row.payoutId, list);
+  }
+
+  const settlementIdForPayoutId = new Map<number, number>();
+  settlementIdsByPayoutId.forEach((settlementIds, payoutId) => {
+    if (settlementIds.length === 1) settlementIdForPayoutId.set(payoutId, settlementIds[0]);
+  });
+  if (settlementIdForPayoutId.size === 0) return result;
+
+  const uniqueSettlementIds = Array.from(new Set(Array.from(settlementIdForPayoutId.values())));
+  const settlementRows = await db.select({
+    id: profitSettlements.id,
+    promotionProofUrl: profitSettlements.promotionProofUrl,
+  }).from(profitSettlements).where(inArray(profitSettlements.id, uniqueSettlementIds));
+
+  const proofUrlBySettlementId = new Map(settlementRows.map(s => [s.id, s.promotionProofUrl]));
+
+  settlementIdForPayoutId.forEach((settlementId, payoutId) => {
+    result.set(payoutId, proofUrlBySettlementId.get(settlementId) ?? null);
+  });
+
+  return result;
+}
+
+export interface PayoutWithPromotionProof extends ProfitSettlementPayout {
+  promotionProofUrl: string | null;
+}
+
+export async function getPayoutsByMerchant(merchantId: number): Promise<PayoutWithPromotionProof[]> {
   const db = await getDb();
   if (!db) return [];
-  return await db.select().from(profitSettlementPayouts)
+
+  const rows = await db.select().from(profitSettlementPayouts)
     .where(eq(profitSettlementPayouts.merchantId, merchantId))
     .orderBy(desc(profitSettlementPayouts.createdAt));
+
+  const proofUrlByPayoutId = await resolvePayoutPromotionProofUrls(rows.map(r => r.id));
+
+  return rows.map(r => ({ ...r, promotionProofUrl: proofUrlByPayoutId.get(r.id) ?? null }));
+}
+
+export type MaskedPayoutWithPromotionProof = Omit<PayoutWithPromotionProof, "promotionProofUrl">;
+
+// canViewCosts gate for the merchant-facing myPayouts view - same "strip the
+// key entirely, no exception" convention as maskMerchantShareDetail. Never
+// applied to getAllPayouts (admin-only, always full detail).
+export function maskPayoutPromotionProof(
+  payout: PayoutWithPromotionProof,
+  canViewCosts: boolean,
+): PayoutWithPromotionProof | MaskedPayoutWithPromotionProof {
+  if (canViewCosts) return payout;
+  const { promotionProofUrl, ...rest } = payout;
+  return rest;
 }
 
 export interface PayoutWithMerchant {
@@ -1622,6 +1694,7 @@ export interface PayoutWithMerchant {
   merchantRole: Merchant["role"];
   amount: number;
   proofUrl: string | null;
+  promotionProofUrl: string | null;
   note: string | null;
   createdAt: Date;
 }
@@ -1649,6 +1722,8 @@ export async function getAllPayouts(): Promise<PayoutWithMerchant[]> {
     .leftJoin(merchants, eq(profitSettlementPayouts.merchantId, merchants.id))
     .orderBy(desc(profitSettlementPayouts.createdAt));
 
+  const proofUrlByPayoutId = await resolvePayoutPromotionProofUrls(rows.map(r => r.id));
+
   return rows.map(r => ({
     id: r.id,
     merchantId: r.merchantId,
@@ -1656,6 +1731,7 @@ export async function getAllPayouts(): Promise<PayoutWithMerchant[]> {
     merchantRole: r.merchantRole ?? "sales_rep",
     amount: parseFloat(r.amount),
     proofUrl: r.proofUrl,
+    promotionProofUrl: proofUrlByPayoutId.get(r.id) ?? null,
     note: r.note,
     createdAt: r.createdAt,
   }));

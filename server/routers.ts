@@ -879,7 +879,8 @@ export const appRouter = router({
       if (ctx.merchant.overridePercentage === null) {
         throw new TRPCError({ code: "FORBIDDEN", message: "هذه البيانات متاحة فقط لأصحاب حصة إضافية بالهيكل التنظيمي" });
       }
-      return await db.getPayoutsByMerchant(ctx.merchant.id);
+      const rows = await db.getPayoutsByMerchant(ctx.merchant.id);
+      return rows.map(row => db.maskPayoutPromotionProof(row, ctx.merchant.canViewCosts));
     }),
 
     // Merchant-facing: FULL settlement detail (grossProfit, promotionCost,
