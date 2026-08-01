@@ -24,6 +24,7 @@ export default function AdminProfitSettlements() {
   const [merchantId, setMerchantId] = useState<string>("");
   const [startDate, setStartDate] = useState<string>("");
   const [endDate, setEndDate] = useState<string>("");
+  const [productId, setProductId] = useState<string>(""); // "" = كل المنتجات
   const [promotionCost, setPromotionCost] = useState<string>("0");
   const [promotionProofPreview, setPromotionProofPreview] = useState<string | null>(null);
   const [promotionProofName, setPromotionProofName] = useState<string | undefined>(undefined);
@@ -50,14 +51,31 @@ export default function AdminProfitSettlements() {
   }, [startDate, endDate]);
 
   const canQuery = merchantId !== "" && period !== null;
+  const selectedProductId = productId ? parseInt(productId) : undefined;
 
   const orders = trpc.profitSettlements.unsettledOrders.useQuery(
+    canQuery ? { merchantId: parseInt(merchantId), ...period!, productId: selectedProductId } : ({} as any),
+    { enabled: canQuery, refetchOnWindowFocus: false }
+  );
+
+  // Unfiltered fetch (no productId) purely to populate the "تصفية حسب منتج"
+  // options list - kept independent of the filtered `orders` query above so
+  // switching between products doesn't require resetting the picker first.
+  const allOrdersForProductOptions = trpc.profitSettlements.unsettledOrders.useQuery(
     canQuery ? { merchantId: parseInt(merchantId), ...period! } : ({} as any),
     { enabled: canQuery, refetchOnWindowFocus: false }
   );
 
+  const productOptions = useMemo(() => {
+    const map = new Map<number, string>();
+    for (const o of allOrdersForProductOptions.data ?? []) {
+      if (o.productId != null && !map.has(o.productId)) map.set(o.productId, o.productType);
+    }
+    return Array.from(map.entries(), ([id, label]) => ({ id, label }));
+  }, [allOrdersForProductOptions.data]);
+
   const preview = trpc.profitSettlements.preview.useQuery(
-    canQuery ? { merchantId: parseInt(merchantId), ...period!, promotionCost: parseFloat(promotionCost) || 0 } : ({} as any),
+    canQuery ? { merchantId: parseInt(merchantId), ...period!, promotionCost: parseFloat(promotionCost) || 0, productId: selectedProductId } : ({} as any),
     { enabled: false }
   );
 
@@ -69,6 +87,7 @@ export default function AdminProfitSettlements() {
       setMerchantId("");
       setStartDate("");
       setEndDate("");
+      setProductId("");
       setPromotionCost("0");
       setPromotionProofPreview(null);
       setPromotionProofName(undefined);
@@ -94,6 +113,7 @@ export default function AdminProfitSettlements() {
     createMutation.mutate({
       merchantId: parseInt(merchantId),
       ...period!,
+      productId: selectedProductId,
       promotionCost: parseFloat(promotionCost) || 0,
       promotionProofBase64: promotionProofName ? (promotionProofPreview ?? undefined) : undefined,
       promotionProofName,
@@ -194,10 +214,10 @@ export default function AdminProfitSettlements() {
           </CardTitle>
         </CardHeader>
         <CardContent>
-          <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
+          <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-5">
             <div className="space-y-2">
               <Label>التاجر</Label>
-              <Select value={merchantId} onValueChange={(v) => { setMerchantId(v); setShowPreview(false); }}>
+              <Select value={merchantId} onValueChange={(v) => { setMerchantId(v); setProductId(""); setShowPreview(false); }}>
                 <SelectTrigger><SelectValue placeholder="اختر تاجراً" /></SelectTrigger>
                 <SelectContent>
                   {merchants.data?.map(m => (
@@ -211,12 +231,26 @@ export default function AdminProfitSettlements() {
             </div>
             <div className="space-y-2">
               <Label>من تاريخ</Label>
-              <Input type="date" value={startDate} onChange={(e) => { setStartDate(e.target.value); setShowPreview(false); }} />
+              <Input type="date" value={startDate} onChange={(e) => { setStartDate(e.target.value); setProductId(""); setShowPreview(false); }} />
             </div>
             <div className="space-y-2">
               <Label>إلى تاريخ</Label>
-              <Input type="date" value={endDate} onChange={(e) => { setEndDate(e.target.value); setShowPreview(false); }} />
+              <Input type="date" value={endDate} onChange={(e) => { setEndDate(e.target.value); setProductId(""); setShowPreview(false); }} />
             </div>
+            {canQuery && (
+              <div className="space-y-2">
+                <Label>تصفية حسب منتج</Label>
+                <Select value={productId || "all"} onValueChange={(v) => { setProductId(v === "all" ? "" : v); setShowPreview(false); }}>
+                  <SelectTrigger><SelectValue placeholder="كل المنتجات" /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">كل المنتجات</SelectItem>
+                    {productOptions.map(p => (
+                      <SelectItem key={p.id} value={String(p.id)}>{p.label}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            )}
             <div className="space-y-2 border-2 border-amber-300 bg-amber-50/50 dark:bg-amber-950/20 rounded-lg p-3">
               <Label>كلفة الترويج للفترة (د.ع)</Label>
               <Input

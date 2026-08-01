@@ -942,12 +942,19 @@ export async function computeProfitShares(
 // delivered-only revenue-recognition rule as the legacy settlements flow
 // (see PHYSICAL_TERMINAL_STATUSES / getUnsettledBalanceForMerchant above),
 // but scoped to profitSettlementId rather than settlementId.
+// productId (optional) scopes this to a single catalog product - manual
+// "إدخال يدوي" orders (physicalOrders.productId IS NULL) never match a
+// productId filter, so a per-product settlement can only ever be created for
+// catalog-picked orders; they still show up under the unfiltered "كل
+// المنتجات" view.
 export async function getEligibleProfitOrders(
   merchantId: number,
   periodStart: Date,
   periodEnd: Date,
+  productId?: number,
 ): Promise<Array<{
   id: number;
+  productId: number | null;
   productType: string;
   productPrice: number;
   quantity: number;
@@ -960,8 +967,17 @@ export async function getEligibleProfitOrders(
 }>> {
   const db = await getDb();
   if (!db) return [];
+  const conditions = [
+    eq(physicalOrders.merchantId, merchantId),
+    eq(physicalOrders.status, "delivered"),
+    isNull(physicalOrders.profitSettlementId),
+    gte(physicalOrders.createdAt, periodStart),
+    lte(physicalOrders.createdAt, periodEnd),
+  ];
+  if (productId) conditions.push(eq(physicalOrders.productId, productId));
   return await db.select({
     id: physicalOrders.id,
+    productId: physicalOrders.productId,
     productType: physicalOrders.productType,
     productPrice: physicalOrders.productPrice,
     quantity: physicalOrders.quantity,
@@ -971,13 +987,7 @@ export async function getEligibleProfitOrders(
     grossProfitAtOrderTime: physicalOrders.grossProfitAtOrderTime,
     commissionAtOrderTime: physicalOrders.commissionAtOrderTime,
     createdAt: physicalOrders.createdAt,
-  }).from(physicalOrders).where(and(
-    eq(physicalOrders.merchantId, merchantId),
-    eq(physicalOrders.status, "delivered"),
-    isNull(physicalOrders.profitSettlementId),
-    gte(physicalOrders.createdAt, periodStart),
-    lte(physicalOrders.createdAt, periodEnd),
-  )).orderBy(desc(physicalOrders.createdAt));
+  }).from(physicalOrders).where(and(...conditions)).orderBy(desc(physicalOrders.createdAt));
 }
 
 // Merchants with at least one delivered, not-yet-profit-settled physical
@@ -1004,8 +1014,9 @@ export async function previewProfitSettlement(
   periodStart: Date,
   periodEnd: Date,
   promotionCost: number,
+  productId?: number,
 ): Promise<ProfitShareBreakdown & { grossProfit: number; orderCount: number }> {
-  const orders = await getEligibleProfitOrders(merchantId, periodStart, periodEnd);
+  const orders = await getEligibleProfitOrders(merchantId, periodStart, periodEnd, productId);
   const grossProfit = orders.reduce((acc, o) => acc + o.grossProfitAtOrderTime, 0);
   const merchantShare = orders.reduce((acc, o) => acc + o.commissionAtOrderTime, 0);
   const shares = await computeProfitShares(merchantId, grossProfit, promotionCost, merchantShare);
@@ -1034,18 +1045,26 @@ export async function createProfitSettlement(input: {
   if (!db) throw new Error("Database not available");
 
   return await db.transaction(async (tx) => {
-    const rows = await tx.select({
-      id: physicalOrders.id,
-      status: physicalOrders.status,
-      grossProfitAtOrderTime: physicalOrders.grossProfitAtOrderTime,
-      commissionAtOrderTime: physicalOrders.commissionAtOrderTime,
-    }).from(physicalOrders).where(and(
+    const sweepConditions = [
       eq(physicalOrders.merchantId, input.merchantId),
       isNull(physicalOrders.profitSettlementId),
       inArray(physicalOrders.status, PHYSICAL_TERMINAL_STATUSES),
       gte(physicalOrders.createdAt, input.periodStart),
       lte(physicalOrders.createdAt, input.periodEnd),
-    ));
+    ];
+    // Scope the sweep itself to the requested product, not just the
+    // productId stamped on the resulting profitSettlements row - otherwise a
+    // "per-product" settlement would still stamp profitSettlementId onto
+    // every OTHER product's orders too, silently closing them out of the
+    // unsettled pool without ever paying them out.
+    if (input.productId) sweepConditions.push(eq(physicalOrders.productId, input.productId));
+
+    const rows = await tx.select({
+      id: physicalOrders.id,
+      status: physicalOrders.status,
+      grossProfitAtOrderTime: physicalOrders.grossProfitAtOrderTime,
+      commissionAtOrderTime: physicalOrders.commissionAtOrderTime,
+    }).from(physicalOrders).where(and(...sweepConditions));
 
     const delivered = rows.filter(r => r.status === "delivered");
     if (delivered.length === 0) {

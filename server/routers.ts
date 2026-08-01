@@ -723,9 +723,10 @@ export const appRouter = router({
         merchantId: z.number(),
         periodStart: z.date(),
         periodEnd: z.date(),
+        productId: z.number().optional(),
       }))
       .query(async ({ input }) => {
-        return await db.getEligibleProfitOrders(input.merchantId, input.periodStart, input.periodEnd);
+        return await db.getEligibleProfitOrders(input.merchantId, input.periodStart, input.periodEnd, input.productId);
       }),
 
     // Admin-only, read-only: dry-run of create's calculation (same
@@ -736,9 +737,10 @@ export const appRouter = router({
         periodStart: z.date(),
         periodEnd: z.date(),
         promotionCost: z.number().min(0),
+        productId: z.number().optional(),
       }))
       .query(async ({ input }) => {
-        return await db.previewProfitSettlement(input.merchantId, input.periodStart, input.periodEnd, input.promotionCost);
+        return await db.previewProfitSettlement(input.merchantId, input.periodStart, input.periodEnd, input.promotionCost, input.productId);
       }),
 
     list: appAdminProcedure
