@@ -692,9 +692,14 @@ export const appRouter = router({
     // grossProfit is no longer a client input - db.createProfitSettlement
     // derives it from delivered physicalOrders.grossProfitAtOrderTime within
     // the period (see db.ts).
+    // merchantIds: usually one merchant (the original single-merchant flow),
+    // or several for a "team settlement" - a supervisor/leader plus a chosen
+    // subset of their DIRECT subordinates on the same ad campaign. db.ts
+    // enforces server-side that anything beyond one id shares the same
+    // direct parent - never trust the client on this.
     create: appAdminProcedure
       .input(z.object({
-        merchantId: z.number(),
+        merchantIds: z.array(z.number()).min(1),
         productId: z.number().optional(),
         periodStart: z.date(),
         periodEnd: z.date(),
@@ -710,37 +715,55 @@ export const appRouter = router({
 
     // Admin-only, read-only: merchants with at least one delivered order not
     // yet swept into a profit settlement - populates the merchant picker on
-    // the hierarchical settlements admin page.
+    // the hierarchical settlements admin page (single-merchant mode).
     unsettledMerchants: appAdminProcedure.query(async () => {
       return await db.getMerchantsWithUnsettledProfitOrders();
     }),
 
+    // Admin-only, read-only: every supervisor/leader with at least one direct
+    // subordinate - populates the supervisor/leader picker for team-settlement
+    // mode (step 1 of 2, before picking which of their direct subordinates to
+    // include).
+    groupHeads: appAdminProcedure.query(async () => {
+      return await db.getGroupSettlementHeads();
+    }),
+
+    // Admin-only, read-only: a chosen supervisor/leader's DIRECT subordinates
+    // only (one level down, never their whole subtree - see
+    // physicalOrders.liveTeamOrders for the all-depth equivalent used
+    // elsewhere) - populates the checkbox list for team-settlement mode.
+    directSubordinates: appAdminProcedure
+      .input(z.object({ parentMerchantId: z.number() }))
+      .query(async ({ input }) => {
+        return await db.getDirectSubordinates(input.parentMerchantId);
+      }),
+
     // Admin-only, read-only: the eligible delivered orders (with their
-    // frozen cost/profit snapshot) for a merchant within a period - the
-    // detailed breakdown table on the admin page.
+    // frozen cost/profit snapshot) across the given merchant(s) within a
+    // period - the detailed breakdown table on the admin page.
     unsettledOrders: appAdminProcedure
       .input(z.object({
-        merchantId: z.number(),
+        merchantIds: z.array(z.number()).min(1),
         periodStart: z.date(),
         periodEnd: z.date(),
         productId: z.number().optional(),
       }))
       .query(async ({ input }) => {
-        return await db.getEligibleProfitOrders(input.merchantId, input.periodStart, input.periodEnd, input.productId);
+        return await db.getEligibleProfitOrders(input.merchantIds, input.periodStart, input.periodEnd, input.productId);
       }),
 
     // Admin-only, read-only: dry-run of create's calculation (same
     // grossProfit derivation), no DB writes - powers the "معاينة" button.
     preview: appAdminProcedure
       .input(z.object({
-        merchantId: z.number(),
+        merchantIds: z.array(z.number()).min(1),
         periodStart: z.date(),
         periodEnd: z.date(),
         promotionCost: z.number().min(0),
         productId: z.number().optional(),
       }))
       .query(async ({ input }) => {
-        return await db.previewProfitSettlement(input.merchantId, input.periodStart, input.periodEnd, input.promotionCost, input.productId);
+        return await db.previewProfitSettlement(input.merchantIds, input.periodStart, input.periodEnd, input.promotionCost, input.productId);
       }),
 
     list: appAdminProcedure
@@ -757,6 +780,13 @@ export const appRouter = router({
     // balance - powers the "أرصدة التجار" admin table.
     balances: appAdminProcedure.query(async () => {
       return await db.getMerchantsWithOverrideBalances();
+    }),
+
+    // Admin-only, read-only: every payout ever made across all merchants -
+    // powers the "سجل الدفعات" admin tab (distinct from myPayouts, which is
+    // merchant-facing and scoped to ctx.merchant.id only).
+    allPayouts: appAdminProcedure.query(async () => {
+      return await db.getAllPayouts();
     }),
 
     // Admin-only: sweeps a merchant's entire current outstanding balance into
@@ -831,16 +861,17 @@ export const appRouter = router({
 
     // Merchant-facing: full breakdown of own shares (paid/unpaid/all),
     // including the promotion-cost/proof and per-order cost detail of the
-    // settlements that produced them - see db.getMerchantShareDetails for
-    // why this intentionally bypasses the usual grossProfit/promotionCost
-    // masking (the viewer here is the share owner, not a bystander).
+    // settlements that produced them. Masked via canViewCosts (read from
+    // ctx.merchant - the session owner - never from input): true sees
+    // everything, false strips every financial figure with no exception.
     myShareDetails: merchantProcedure
       .input(z.object({ filter: z.enum(["paid", "unpaid"]).optional() }).optional())
       .query(async ({ ctx, input }) => {
         if (ctx.merchant.overridePercentage === null) {
           throw new TRPCError({ code: "FORBIDDEN", message: "هذه البيانات متاحة فقط لأصحاب حصة إضافية بالهيكل التنظيمي" });
         }
-        return await db.getMerchantShareDetails(ctx.merchant.id, input?.filter);
+        const rows = await db.getMerchantShareDetails(ctx.merchant.id, input?.filter);
+        return rows.map(row => db.maskMerchantShareDetail(row, ctx.merchant.canViewCosts));
       }),
 
     // Merchant-facing: own payout history.
@@ -850,6 +881,66 @@ export const appRouter = router({
       }
       return await db.getPayoutsByMerchant(ctx.merchant.id);
     }),
+
+    // Merchant-facing: FULL settlement detail (grossProfit, promotionCost,
+    // proof image, per-order breakdown) for ANY descendant at any depth -
+    // unlike myShareDetails above, does NOT require the caller to personally
+    // hold a share in that settlement. ancestorId passed to
+    // getSubordinateShareDetailsForAncestor is ALWAYS ctx.merchant.id (the
+    // real session owner) - never input.targetMerchantId - so a merchant can
+    // never pass someone else's id and pretend to be their ancestor; db.ts's
+    // isAncestorOf is the actual server-side proof of the hierarchy
+    // relationship, re-checked on every call regardless of what the
+    // client-side UI already restricts the picker to.
+    subordinateShareDetails: merchantProcedure
+      .input(z.object({ targetMerchantId: z.number() }))
+      .query(async ({ ctx, input }) => {
+        if (ctx.merchant.role === "sales_rep") {
+          throw new TRPCError({ code: "FORBIDDEN", message: "هذه البيانات غير متاحة لمندوب المبيعات" });
+        }
+        const rows = await db.getSubordinateShareDetailsForAncestor(ctx.merchant.id, input.targetMerchantId);
+        // canViewCosts is the viewing ancestor's OWN flag, never the target
+        // descendant's.
+        return rows.map(row => db.maskSubordinateSettlementDetail(row, ctx.merchant.canViewCosts));
+      }),
+
+    // Merchant-facing: every descendant at any depth (id/name/role only) -
+    // populates the "اختر تابعاً" picker for subordinateShareDetails above.
+    myDescendants: merchantProcedure.query(async ({ ctx }) => {
+      if (ctx.merchant.role === "sales_rep") {
+        throw new TRPCError({ code: "FORBIDDEN", message: "هذه البيانات غير متاحة لمندوب المبيعات" });
+      }
+      const ids = await db.getAllDescendantMerchantIds(ctx.merchant.id);
+      const rows = await db.getMerchantsByIds(ids);
+      return rows.map(m => ({ id: m.id, name: m.name, role: m.role }));
+    }),
+
+    // Admin-only, read-only: a specific merchant's UNPAID share breakdown,
+    // full detail, never masked (admin always sees everything, same
+    // convention as every other admin-only endpoint in this file) - powers
+    // the per-share "دفع" buttons in the "أرصدة التجار" admin table.
+    merchantShareDetails: appAdminProcedure
+      .input(z.object({ merchantId: z.number() }))
+      .query(async ({ input }) => {
+        return await db.getMerchantShareDetails(input.merchantId, "unpaid");
+      }),
+
+    // Admin-only: pays out exactly ONE outstanding share (see
+    // db.settleSingleShare's double-payment guard). Fully independent of
+    // settlePayout above (which sweeps ALL of a merchant's outstanding
+    // shares) - both stay available side by side, unchanged.
+    settleSingleShare: appAdminProcedure
+      .input(z.object({
+        shareId: z.number(),
+        note: z.string().max(1000).optional(),
+        proofBase64: z.string().optional(),
+        proofName: z.string().optional(),
+      }))
+      .mutation(async ({ input }) => {
+        const { proofBase64, proofName, ...rest } = input;
+        const { url } = await uploadPayoutProofImage(proofBase64, proofName);
+        return await db.settleSingleShare({ ...rest, proofUrl: url });
+      }),
   }),
 
   // ==================== Dashboard Stats (Admin) ====================

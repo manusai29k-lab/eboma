@@ -321,6 +321,31 @@ export type ProfitSettlementShare = typeof profitSettlementShares.$inferSelect;
 export type InsertProfitSettlementShare = typeof profitSettlementShares.$inferInsert;
 
 /**
+ * One row per merchant whose orders were swept into a given profitSettlements
+ * row - the source of truth for "which sellers does this settlement cover",
+ * used by db.getProfitSettlementsByMerchant (mySettlements/mySubordinates).
+ * For a single-merchant settlement (the original flow) this is still exactly
+ * one row, same as profitSettlementShares' "0 or more" pattern - no special
+ * casing between single vs. group settlements. For a "team settlement"
+ * (db.createProfitSettlement given multiple merchantIds - a supervisor/leader
+ * plus a chosen subset of their DIRECT subordinates sharing one ad campaign)
+ * this has one row per included subordinate.
+ * profitSettlements.merchantId itself keeps pointing at just the first
+ * included merchantId for a team settlement (kept for backward-compat with
+ * any direct column reads) - this table is what makes every included member
+ * show the settlement in their own history, not just that first one.
+ */
+export const profitSettlementMerchants = mysqlTable("profit_settlement_merchants", {
+  id: int("id").autoincrement().primaryKey(),
+  settlementId: int("settlementId").notNull(), // -> profitSettlements.id, no FK (same as rest of this schema)
+  merchantId: int("merchantId").notNull(), // one seller whose orders were swept into this settlement
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+
+export type ProfitSettlementMerchant = typeof profitSettlementMerchants.$inferSelect;
+export type InsertProfitSettlementMerchant = typeof profitSettlementMerchants.$inferInsert;
+
+/**
  * One row per admin-initiated payout: sweeps every currently-outstanding
  * profitSettlementShares row for a merchant (payoutId IS NULL) into a single
  * payment record, atomically stamping payoutId onto all of them (see

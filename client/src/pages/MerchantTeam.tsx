@@ -3,10 +3,12 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { RoleBadge } from "@/components/RoleBadge";
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { ImageLightbox } from "@/components/ImageLightbox";
 import { ROLE_CONFIG } from "@/lib/merchantRoles";
 import { useLocation } from "wouter";
 import { ArrowRight, Users, TrendingUp, Layers, Wallet, Radio } from "lucide-react";
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 
 const STATUS_BADGE: Record<string, { label: string; className: string }> = {
   draft: { label: "مسودة", className: "bg-amber-500/20 text-amber-300 border border-amber-500/30" },
@@ -161,6 +163,18 @@ export default function MerchantTeam() {
     refetchOnWindowFocus: false,
   });
 
+  const [selectedDescendantId, setSelectedDescendantId] = useState<string>("");
+
+  const myDescendants = trpc.profitSettlements.myDescendants.useQuery(undefined, {
+    enabled: enabled && role !== "sales_rep",
+    refetchOnWindowFocus: false,
+  });
+
+  const subordinateShareDetails = trpc.profitSettlements.subordinateShareDetails.useQuery(
+    selectedDescendantId ? { targetMerchantId: parseInt(selectedDescendantId) } : ({} as any),
+    { enabled: enabled && role !== "sales_rep" && selectedDescendantId !== "", refetchOnWindowFocus: false }
+  );
+
   if (merchantMe.isLoading || !merchantMe.data) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-[#060814]">
@@ -223,7 +237,7 @@ export default function MerchantTeam() {
                         {p.note && <p className="text-xs text-white/30 mt-1">{p.note}</p>}
                       </div>
                       <div className="flex items-center gap-3">
-                        {p.proofUrl && <img src={p.proofUrl} alt="إثبات الدفع" className="max-h-12 rounded-lg border border-white/10" />}
+                        {p.proofUrl && <ImageLightbox src={p.proofUrl} alt="إثبات الدفع" className="max-h-12 rounded-lg border border-white/10" />}
                         <p className="text-lg font-bold text-emerald-300">{formatMoney(p.amount)} د.ع</p>
                       </div>
                     </div>
@@ -251,51 +265,91 @@ export default function MerchantTeam() {
                           <span className="text-sm text-white/70">
                             {formatPeriod(share.settlement.periodStart, share.settlement.periodEnd)} — {share.settlement.sourceMerchantName}
                           </span>
-                          <span className="text-emerald-300 font-bold shrink-0">{formatMoney(share.shareAmount)} د.ع</span>
+                          {/* shareAmount exists only on the unmasked branch
+                              (canViewCosts=true) - checked via 'in', not
+                              assumed, since MaskedMerchantShareDetail omits it
+                              entirely. */}
+                          {'shareAmount' in share && (
+                            <span className="text-emerald-300 font-bold shrink-0">{formatMoney(share.shareAmount)} د.ع</span>
+                          )}
                         </div>
                       </AccordionTrigger>
                       <AccordionContent>
                         <div className="space-y-3 pb-2">
-                          <p className="text-sm text-white/50">
-                            صافي الربح: <span className="text-white/70">{formatMoney(share.settlement.netProfit)} د.ع</span>
-                            <span className="ms-3">كلفة الترويج: <span className="text-white/70">{formatMoney(share.settlement.promotionCost)} د.ع</span></span>
-                          </p>
-                          {share.settlement.promotionProofUrl && (
-                            <img src={share.settlement.promotionProofUrl} alt="إثبات الترويج" className="max-h-24 rounded-lg border border-white/10" />
+                          {'shareAmount' in share ? (
+                            <>
+                              <p className="text-sm text-white/50">
+                                صافي الربح: <span className="text-white/70">{formatMoney(share.settlement.netProfit)} د.ع</span>
+                                <span className="ms-3">كلفة الترويج: <span className="text-white/70">{formatMoney(share.settlement.promotionCost)} د.ع</span></span>
+                              </p>
+                              {share.settlement.promotionProofUrl && (
+                                <ImageLightbox src={share.settlement.promotionProofUrl} alt="إثبات الترويج" className="max-h-24 rounded-lg border border-white/10" />
+                              )}
+                              <div className="overflow-x-auto">
+                                <table className="w-full text-xs">
+                                  <thead>
+                                    <tr className="text-white/40 border-b border-white/10">
+                                      <th className="text-start py-1 pe-3 font-normal">المنتج</th>
+                                      <th className="text-start py-1 pe-3 font-normal">الكمية</th>
+                                      <th className="text-start py-1 pe-3 font-normal">السعر</th>
+                                      <th className="text-start py-1 pe-3 font-normal">تكلفة الجملة</th>
+                                      <th className="text-start py-1 pe-3 font-normal">تكلفة التوصيل</th>
+                                      <th className="text-start py-1 pe-3 font-normal">صافي الربح</th>
+                                      <th className="text-start py-1 pe-3 font-normal">المندوب</th>
+                                      <th className="text-start py-1 pe-3 font-normal">العمولة</th>
+                                      <th className="text-start py-1 font-normal">التاريخ</th>
+                                    </tr>
+                                  </thead>
+                                  <tbody>
+                                    {share.orders.map(o => (
+                                      <tr key={o.id} className="border-b border-white/5">
+                                        <td className="py-1.5 pe-3 text-white/70">{o.productType}</td>
+                                        <td className="py-1.5 pe-3 text-white/70">{o.quantity}</td>
+                                        <td className="py-1.5 pe-3 text-white/70">{o.totalPrice.toLocaleString()}</td>
+                                        <td className="py-1.5 pe-3 text-white/70">{o.wholesaleCostAtOrderTime.toLocaleString()}</td>
+                                        <td className="py-1.5 pe-3 text-white/70">{o.deliveryCostAtOrderTime.toLocaleString()}</td>
+                                        <td className="py-1.5 pe-3 text-white/70">{o.grossProfitAtOrderTime.toLocaleString()}</td>
+                                        <td className="py-1.5 pe-3 text-white/70">{o.merchantName}</td>
+                                        <td className="py-1.5 pe-3 text-white/70">{o.commissionAtOrderTime.toLocaleString()}</td>
+                                        <td className="py-1.5 text-white/50">{new Date(o.createdAt).toLocaleDateString("ar-IQ")}</td>
+                                      </tr>
+                                    ))}
+                                  </tbody>
+                                </table>
+                              </div>
+                              <p className="text-xs text-white/30">
+                                {share.orderCount} طلب — {share.distinctMerchantCount} مندوب — إجمالي عمولاتهم {share.totalCommission.toLocaleString()} د.ع
+                              </p>
+                            </>
+                          ) : (
+                            <>
+                              <div className="overflow-x-auto">
+                                <table className="w-full text-xs">
+                                  <thead>
+                                    <tr className="text-white/40 border-b border-white/10">
+                                      <th className="text-start py-1 pe-3 font-normal">رقم الطلب</th>
+                                      <th className="text-start py-1 pe-3 font-normal">المنتج</th>
+                                      <th className="text-start py-1 pe-3 font-normal">الكمية</th>
+                                      <th className="text-start py-1 pe-3 font-normal">المندوب</th>
+                                      <th className="text-start py-1 font-normal">التاريخ</th>
+                                    </tr>
+                                  </thead>
+                                  <tbody>
+                                    {share.orders.map(o => (
+                                      <tr key={o.id} className="border-b border-white/5">
+                                        <td className="py-1.5 pe-3 text-white/70">#{o.id}</td>
+                                        <td className="py-1.5 pe-3 text-white/70">{o.productType}</td>
+                                        <td className="py-1.5 pe-3 text-white/70">{o.quantity}</td>
+                                        <td className="py-1.5 pe-3 text-white/70">{o.merchantName}</td>
+                                        <td className="py-1.5 text-white/50">{new Date(o.createdAt).toLocaleDateString("ar-IQ")}</td>
+                                      </tr>
+                                    ))}
+                                  </tbody>
+                                </table>
+                              </div>
+                              <p className="text-xs text-white/30">{share.orderCount} طلب — {share.distinctMerchantCount} مندوب</p>
+                            </>
                           )}
-                          <div className="overflow-x-auto">
-                            <table className="w-full text-xs">
-                              <thead>
-                                <tr className="text-white/40 border-b border-white/10">
-                                  <th className="text-start py-1 pe-3 font-normal">المنتج</th>
-                                  <th className="text-start py-1 pe-3 font-normal">الكمية</th>
-                                  <th className="text-start py-1 pe-3 font-normal">السعر</th>
-                                  <th className="text-start py-1 pe-3 font-normal">تكلفة الجملة</th>
-                                  <th className="text-start py-1 pe-3 font-normal">تكلفة التوصيل</th>
-                                  <th className="text-start py-1 pe-3 font-normal">صافي الربح</th>
-                                  <th className="text-start py-1 pe-3 font-normal">المندوب</th>
-                                  <th className="text-start py-1 font-normal">العمولة</th>
-                                </tr>
-                              </thead>
-                              <tbody>
-                                {share.orders.map(o => (
-                                  <tr key={o.id} className="border-b border-white/5">
-                                    <td className="py-1.5 pe-3 text-white/70">{o.productType}</td>
-                                    <td className="py-1.5 pe-3 text-white/70">{o.quantity}</td>
-                                    <td className="py-1.5 pe-3 text-white/70">{o.totalPrice.toLocaleString()}</td>
-                                    <td className="py-1.5 pe-3 text-white/70">{o.wholesaleCostAtOrderTime.toLocaleString()}</td>
-                                    <td className="py-1.5 pe-3 text-white/70">{o.deliveryCostAtOrderTime.toLocaleString()}</td>
-                                    <td className="py-1.5 pe-3 text-white/70">{o.grossProfitAtOrderTime.toLocaleString()}</td>
-                                    <td className="py-1.5 pe-3 text-white/70">{o.merchantName}</td>
-                                    <td className="py-1.5 text-white/70">{o.commissionAtOrderTime.toLocaleString()}</td>
-                                  </tr>
-                                ))}
-                              </tbody>
-                            </table>
-                          </div>
-                          <p className="text-xs text-white/30">
-                            {share.orderCount} طلب — {share.distinctMerchantCount} مندوب — إجمالي عمولاتهم {share.totalCommission.toLocaleString()} د.ع
-                          </p>
                         </div>
                       </AccordionContent>
                     </AccordionItem>
@@ -374,6 +428,142 @@ export default function MerchantTeam() {
                 <Layers className="w-12 h-12 mx-auto text-white/20 mb-3" />
                 <p className="text-white/40">لا يوجد أعضاء في فريقك بعد</p>
               </div>
+            )}
+          </section>
+        )}
+
+        {/* Full settlement detail for ANY descendant at any depth - unlike
+            "فريقي المباشر" above (direct-only, masked to period/status),
+            this shows the same full grossProfit/promotionCost/proof/
+            per-order breakdown as "أرباحي" above, but for a chosen
+            descendant rather than the viewer's own shares. Server-side
+            requires the viewer to actually be an ancestor of the chosen
+            descendant (routers.ts subordinateShareDetails / db.ts
+            isAncestorOf) - never just a UI restriction. Masked by the
+            VIEWER's own canViewCosts (routers.ts), same as "أرباحي". */}
+        {role !== "sales_rep" && (
+          <section>
+            <h2 className="flex items-center gap-2 text-lg font-bold text-white mb-4">
+              <TrendingUp className="w-5 h-5 text-purple-300" />
+              تفاصيل تسويات الفريق
+            </h2>
+            <p className="text-xs text-white/30 mb-3">اختر أي تابع لك (بأي عمق بالهيكل التنظيمي) لعرض تفاصيل تسوياته الكاملة</p>
+
+            <Select value={selectedDescendantId} onValueChange={setSelectedDescendantId}>
+              <SelectTrigger className="mb-4"><SelectValue placeholder="اختر تابعاً" /></SelectTrigger>
+              <SelectContent>
+                {myDescendants.data?.map(m => (
+                  <SelectItem key={m.id} value={String(m.id)}>{m.name} — {ROLE_CONFIG[m.role].label}</SelectItem>
+                ))}
+                {myDescendants.data?.length === 0 && (
+                  <div className="px-2 py-4 text-sm text-white/40 text-center">لا يوجد تابعون بالهيكل التنظيمي</div>
+                )}
+              </SelectContent>
+            </Select>
+
+            {selectedDescendantId !== "" && (
+              subordinateShareDetails.isLoading ? (
+                <p className="text-center text-white/40 py-4">جاري التحميل...</p>
+              ) : subordinateShareDetails.data && subordinateShareDetails.data.length > 0 ? (
+                <Accordion type="single" collapsible className="space-y-2">
+                  {subordinateShareDetails.data.map(detail => (
+                    <AccordionItem
+                      key={detail.settlement.id}
+                      value={String(detail.settlement.id)}
+                      className="rounded-xl bg-white/[0.03] border border-white/10 px-4"
+                    >
+                      <AccordionTrigger className="text-white hover:no-underline">
+                        <span className="text-sm text-white/70">
+                          {formatPeriod(detail.settlement.periodStart, detail.settlement.periodEnd)} — {detail.settlement.sourceMerchantName}
+                        </span>
+                      </AccordionTrigger>
+                      <AccordionContent>
+                        <div className="space-y-3 pb-2">
+                          {/* totalCommission exists only on the unmasked
+                              branch (canViewCosts=true) - checked via 'in',
+                              same convention as "أرباحي" above. */}
+                          {'totalCommission' in detail ? (
+                            <>
+                              <p className="text-sm text-white/50">
+                                صافي الربح: <span className="text-white/70">{formatMoney(detail.settlement.netProfit)} د.ع</span>
+                                <span className="ms-3">كلفة الترويج: <span className="text-white/70">{formatMoney(detail.settlement.promotionCost)} د.ع</span></span>
+                              </p>
+                              {detail.settlement.promotionProofUrl && (
+                                <ImageLightbox src={detail.settlement.promotionProofUrl} alt="إثبات الترويج" className="max-h-24 rounded-lg border border-white/10" />
+                              )}
+                              <div className="overflow-x-auto">
+                                <table className="w-full text-xs">
+                                  <thead>
+                                    <tr className="text-white/40 border-b border-white/10">
+                                      <th className="text-start py-1 pe-3 font-normal">المنتج</th>
+                                      <th className="text-start py-1 pe-3 font-normal">الكمية</th>
+                                      <th className="text-start py-1 pe-3 font-normal">السعر</th>
+                                      <th className="text-start py-1 pe-3 font-normal">تكلفة الجملة</th>
+                                      <th className="text-start py-1 pe-3 font-normal">تكلفة التوصيل</th>
+                                      <th className="text-start py-1 pe-3 font-normal">صافي الربح</th>
+                                      <th className="text-start py-1 pe-3 font-normal">المندوب</th>
+                                      <th className="text-start py-1 pe-3 font-normal">العمولة</th>
+                                      <th className="text-start py-1 font-normal">التاريخ</th>
+                                    </tr>
+                                  </thead>
+                                  <tbody>
+                                    {detail.orders.map(o => (
+                                      <tr key={o.id} className="border-b border-white/5">
+                                        <td className="py-1.5 pe-3 text-white/70">{o.productType}</td>
+                                        <td className="py-1.5 pe-3 text-white/70">{o.quantity}</td>
+                                        <td className="py-1.5 pe-3 text-white/70">{o.totalPrice.toLocaleString()}</td>
+                                        <td className="py-1.5 pe-3 text-white/70">{o.wholesaleCostAtOrderTime.toLocaleString()}</td>
+                                        <td className="py-1.5 pe-3 text-white/70">{o.deliveryCostAtOrderTime.toLocaleString()}</td>
+                                        <td className="py-1.5 pe-3 text-white/70">{o.grossProfitAtOrderTime.toLocaleString()}</td>
+                                        <td className="py-1.5 pe-3 text-white/70">{o.merchantName}</td>
+                                        <td className="py-1.5 pe-3 text-white/70">{o.commissionAtOrderTime.toLocaleString()}</td>
+                                        <td className="py-1.5 text-white/50">{new Date(o.createdAt).toLocaleDateString("ar-IQ")}</td>
+                                      </tr>
+                                    ))}
+                                  </tbody>
+                                </table>
+                              </div>
+                              <p className="text-xs text-white/30">
+                                {detail.orderCount} طلب — {detail.distinctMerchantCount} مندوب — إجمالي عمولاتهم {detail.totalCommission.toLocaleString()} د.ع
+                              </p>
+                            </>
+                          ) : (
+                            <>
+                              <div className="overflow-x-auto">
+                                <table className="w-full text-xs">
+                                  <thead>
+                                    <tr className="text-white/40 border-b border-white/10">
+                                      <th className="text-start py-1 pe-3 font-normal">رقم الطلب</th>
+                                      <th className="text-start py-1 pe-3 font-normal">المنتج</th>
+                                      <th className="text-start py-1 pe-3 font-normal">الكمية</th>
+                                      <th className="text-start py-1 pe-3 font-normal">المندوب</th>
+                                      <th className="text-start py-1 font-normal">التاريخ</th>
+                                    </tr>
+                                  </thead>
+                                  <tbody>
+                                    {detail.orders.map(o => (
+                                      <tr key={o.id} className="border-b border-white/5">
+                                        <td className="py-1.5 pe-3 text-white/70">#{o.id}</td>
+                                        <td className="py-1.5 pe-3 text-white/70">{o.productType}</td>
+                                        <td className="py-1.5 pe-3 text-white/70">{o.quantity}</td>
+                                        <td className="py-1.5 pe-3 text-white/70">{o.merchantName}</td>
+                                        <td className="py-1.5 text-white/50">{new Date(o.createdAt).toLocaleDateString("ar-IQ")}</td>
+                                      </tr>
+                                    ))}
+                                  </tbody>
+                                </table>
+                              </div>
+                              <p className="text-xs text-white/30">{detail.orderCount} طلب — {detail.distinctMerchantCount} مندوب</p>
+                            </>
+                          )}
+                        </div>
+                      </AccordionContent>
+                    </AccordionItem>
+                  ))}
+                </Accordion>
+              ) : (
+                <p className="text-sm text-white/30 py-4">لا توجد تسويات مؤكدة لهذا التابع بعد</p>
+              )
             )}
           </section>
         )}
