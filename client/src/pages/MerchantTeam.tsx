@@ -5,12 +5,32 @@ import { RoleBadge } from "@/components/RoleBadge";
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion";
 import { ROLE_CONFIG } from "@/lib/merchantRoles";
 import { useLocation } from "wouter";
-import { ArrowRight, Users, TrendingUp, Layers, Wallet } from "lucide-react";
+import { ArrowRight, Users, TrendingUp, Layers, Wallet, Radio } from "lucide-react";
 import { useEffect } from "react";
 
 const STATUS_BADGE: Record<string, { label: string; className: string }> = {
   draft: { label: "مسودة", className: "bg-amber-500/20 text-amber-300 border border-amber-500/30" },
   confirmed: { label: "مؤكدة", className: "bg-emerald-500/20 text-emerald-300 border border-emerald-500/30" },
+};
+
+// Same labels/colors as MerchantOrders.tsx's physical order status map -
+// kept as a separate copy here since that file doesn't export them.
+const ORDER_STATUS_LABELS: Record<string, string> = {
+  new: "جديد",
+  preparing: "قيد التجهيز",
+  shipped: "تم الشحن",
+  delivered: "تم التسليم",
+  cancelled: "ملغي",
+  returned: "مرتجع",
+};
+
+const ORDER_STATUS_COLORS: Record<string, string> = {
+  new: "bg-blue-500/20 text-blue-300 border-blue-500/30",
+  preparing: "bg-yellow-500/20 text-yellow-300 border-yellow-500/30",
+  shipped: "bg-purple-500/20 text-purple-300 border-purple-500/30",
+  delivered: "bg-emerald-500/20 text-emerald-300 border-emerald-500/30",
+  cancelled: "bg-red-500/20 text-red-300 border-red-500/30",
+  returned: "bg-orange-500/20 text-orange-300 border-orange-500/30",
 };
 
 function formatMoney(value: string | number | null) {
@@ -20,6 +40,33 @@ function formatMoney(value: string | number | null) {
 
 function formatPeriod(start: string | Date, end: string | Date) {
   return `${new Date(start).toLocaleDateString("ar-IQ")} - ${new Date(end).toLocaleDateString("ar-IQ")}`;
+}
+
+// [singular incl. "واحد", dual, plural] - manager never appears here (it's
+// the top role, so it can never be someone's descendant).
+const ROLE_COUNT_WORDS: Record<string, [string, string, string]> = {
+  sales_rep: ["مندوب واحد", "مندوبان", "مندوبين"],
+  supervisor: ["مشرف واحد", "مشرفان", "مشرفين"],
+  leader: ["قائد واحد", "قائدان", "قادة"],
+  manager: ["مدير واحد", "مديران", "مديرين"],
+};
+
+// Renders a branch's role breakdown bottom-up (sales_rep, then supervisor,
+// then leader) e.g. "3 مندوبين، مشرف واحد" - dynamic per the actual roles
+// present in that branch, since a leader's branch can mix supervisors and
+// sales_reps while a manager's can mix all three.
+function formatRoleCounts(roleCounts: Partial<Record<string, number>>): string {
+  const order = ["sales_rep", "supervisor", "leader"];
+  return order
+    .filter(role => (roleCounts[role] ?? 0) > 0)
+    .map(role => {
+      const n = roleCounts[role]!;
+      const [singular, dual, plural] = ROLE_COUNT_WORDS[role];
+      if (n === 1) return singular;
+      if (n === 2) return dual;
+      return `${n} ${plural}`;
+    })
+    .join("، ");
 }
 
 function SettlementRow({ settlement, viewerRole }: { settlement: any; viewerRole?: string }) {
@@ -101,6 +148,12 @@ export default function MerchantTeam() {
   const myPayouts = trpc.profitSettlements.myPayouts.useQuery(undefined, {
     enabled: enabled && hasOverride,
     refetchOnWindowFocus: false,
+  });
+
+  const liveTeamOrders = trpc.physicalOrders.liveTeamOrders.useQuery(undefined, {
+    enabled: enabled && role !== "sales_rep",
+    refetchOnWindowFocus: false,
+    refetchInterval: 15000,
   });
 
   const myShareDetails = trpc.profitSettlements.myShareDetails.useQuery({ filter: "unpaid" }, {
@@ -319,6 +372,90 @@ export default function MerchantTeam() {
             ) : (
               <div className="text-center py-12">
                 <Layers className="w-12 h-12 mx-auto text-white/20 mb-3" />
+                <p className="text-white/40">لا يوجد أعضاء في فريقك بعد</p>
+              </div>
+            )}
+          </section>
+        )}
+
+        {/* Live team orders - supervisor/leader/manager only, ENTIRE
+            subordinate tree (any depth), grouped by branch: one accordion
+            item per direct subordinate, carrying every order from them and
+            everyone under them (see routers.ts physicalOrders.liveTeamOrders
+            / db.getLiveTeamOrdersByBranch). Independent of profitSettlements
+            - never waits for a settlement sweep. Cost/profit fields appear
+            only when the viewer's own canViewCosts is true. */}
+        {role !== "sales_rep" && (
+          <section>
+            <h2 className="flex items-center gap-2 text-lg font-bold text-white mb-4">
+              <Radio className="w-5 h-5 text-purple-300" />
+              طلبات الفريق الحية
+            </h2>
+            {liveTeamOrders.isLoading ? (
+              <p className="text-center text-white/40 py-8">جاري التحميل...</p>
+            ) : liveTeamOrders.data && liveTeamOrders.data.length > 0 ? (
+              <Accordion type="single" collapsible className="space-y-2">
+                {liveTeamOrders.data.map((branch: any) => (
+                  <AccordionItem
+                    key={branch.merchant.id}
+                    value={String(branch.merchant.id)}
+                    className="rounded-xl bg-white/[0.03] border border-white/10 px-4"
+                  >
+                    <AccordionTrigger className="text-white hover:no-underline">
+                      <div className="flex items-center justify-between w-full pe-2 gap-3 flex-wrap">
+                        <div className="flex items-center gap-2">
+                          <span className="font-semibold">{branch.merchant.name}</span>
+                          <RoleBadge role={branch.merchant.role} />
+                        </div>
+                        <span className="text-xs text-white/40 shrink-0">
+                          {formatRoleCounts(branch.roleCounts)}
+                          {formatRoleCounts(branch.roleCounts) && " — "}
+                          {branch.orders.length} طلب
+                        </span>
+                      </div>
+                    </AccordionTrigger>
+                    <AccordionContent>
+                      {branch.orders.length > 0 ? (
+                        <div className="space-y-3 pb-2">
+                          {branch.orders.map((order: any) => (
+                            <div key={order.id} className="rounded-2xl bg-white/[0.03] border border-white/10 p-5 backdrop-blur-sm">
+                              <div className="flex items-start justify-between gap-4 flex-wrap">
+                                <div className="flex-1 space-y-1">
+                                  <div className="flex items-center gap-2 flex-wrap">
+                                    <span className="font-semibold text-white">#{order.id}</span>
+                                    <Badge className={`${ORDER_STATUS_COLORS[order.status] || "bg-white/10 text-white/60"} border`}>
+                                      {ORDER_STATUS_LABELS[order.status] || order.status}
+                                    </Badge>
+                                    <span className="text-xs text-white/30">{order.merchantName}</span>
+                                  </div>
+                                  <p className="text-sm text-white/60"><span className="text-white/40">المنتج:</span> {order.productType} × {order.quantity}</p>
+                                  <p className="text-sm text-white/60"><span className="text-white/40">العنوان:</span> {order.province} - {order.district}</p>
+                                  {order.grossProfitAtOrderTime !== undefined && (
+                                    <p className="text-sm text-white/60">
+                                      <span className="text-white/40">تكلفة الجملة:</span> {formatMoney(order.wholesaleCostAtOrderTime)} د.ع
+                                      <span className="ms-3 text-white/40">تكلفة التوصيل:</span> {formatMoney(order.deliveryCostAtOrderTime)} د.ع
+                                      <span className="ms-3 text-white/40">صافي الربح:</span> {formatMoney(order.grossProfitAtOrderTime)} د.ع
+                                    </p>
+                                  )}
+                                </div>
+                                <div className="text-start shrink-0">
+                                  <p className="text-lg font-bold text-purple-300">{Number(order.totalPrice).toLocaleString()} د.ع</p>
+                                  <p className="text-xs text-white/30 mt-1">{new Date(order.createdAt).toLocaleDateString("ar-IQ")}</p>
+                                </div>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      ) : (
+                        <p className="text-sm text-white/30 pb-2">لا توجد طلبات لهذا الفرع بعد</p>
+                      )}
+                    </AccordionContent>
+                  </AccordionItem>
+                ))}
+              </Accordion>
+            ) : (
+              <div className="text-center py-12">
+                <Radio className="w-12 h-12 mx-auto text-white/20 mb-3" />
                 <p className="text-white/40">لا يوجد أعضاء في فريقك بعد</p>
               </div>
             )}

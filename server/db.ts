@@ -1165,30 +1165,111 @@ export async function getDirectSubordinatesWithSettlements(merchantId: number): 
   return result;
 }
 
-// Recursive walk down parentId from merchantId (exclusive) - the manager's
-// entire org tree, for subordinatesSummary. No DB-level FK on parentId (see
-// findNearestManagerAncestor above), so this is app-level tree traversal
-// rather than a recursive SQL CTE.
-export async function getAllDescendantMerchantIds(merchantId: number): Promise<number[]> {
+// Shared parentId-based tree-traversal building blocks - no DB-level FK on
+// parentId (see findNearestManagerAncestor above), so this is app-level
+// traversal rather than a recursive SQL CTE. Used by both
+// getAllDescendantMerchantIds (ids only, for subordinatesSummary) and
+// getLiveTeamOrdersByBranch (ids + role, for the per-branch role breakdown).
+async function buildMerchantHierarchyMaps(): Promise<{
+  childrenByParent: Map<number, number[]>;
+  roleById: Map<number, Merchant["role"]>;
+}> {
   const db = await getDb();
-  if (!db) return [];
-  const all = await db.select({ id: merchants.id, parentId: merchants.parentId }).from(merchants);
   const childrenByParent = new Map<number, number[]>();
+  const roleById = new Map<number, Merchant["role"]>();
+  if (!db) return { childrenByParent, roleById };
+  const all = await db.select({ id: merchants.id, parentId: merchants.parentId, role: merchants.role }).from(merchants);
   for (const m of all) {
+    roleById.set(m.id, m.role);
     if (m.parentId == null) continue;
     const siblings = childrenByParent.get(m.parentId) ?? [];
     siblings.push(m.id);
     childrenByParent.set(m.parentId, siblings);
   }
+  return { childrenByParent, roleById };
+}
 
+// BFS walk down from rootId (exclusive) using an already-built children map.
+function walkDescendantIds(childrenByParent: Map<number, number[]>, rootId: number): number[] {
   const result: number[] = [];
-  const queue = [...(childrenByParent.get(merchantId) ?? [])];
+  const queue = [...(childrenByParent.get(rootId) ?? [])];
   while (queue.length > 0) {
     const id = queue.shift()!;
     result.push(id);
     queue.push(...(childrenByParent.get(id) ?? []));
   }
   return result;
+}
+
+// Recursive walk down parentId from merchantId (exclusive) - the manager's
+// entire org tree, for subordinatesSummary.
+export async function getAllDescendantMerchantIds(merchantId: number): Promise<number[]> {
+  const { childrenByParent } = await buildMerchantHierarchyMaps();
+  return walkDescendantIds(childrenByParent, merchantId);
+}
+
+export interface LiveTeamBranch {
+  // The direct subordinate that roots this branch (one of merchantId's
+  // getDirectSubordinates) - not merchantId itself.
+  merchant: Merchant;
+  // Count of descendants under `merchant` (any depth, `merchant` excluded),
+  // grouped by role - e.g. { sales_rep: 3, supervisor: 1 }. Powers the
+  // "3 مندوبين، مشرف واحد" branch-header summary client-side.
+  roleCounts: Partial<Record<Merchant["role"], number>>;
+  // Every physical order placed by `merchant` or any descendant of theirs,
+  // newest first - the whole branch's live, unsettled orders in one list.
+  orders: PhysicalOrder[];
+}
+
+// Live, unsettled view of a supervisor/leader/manager's ENTIRE subordinate
+// tree (any depth), grouped by branch - one entry per direct subordinate,
+// each carrying every order from that subordinate and everyone under them.
+// Independent of profitSettlements - unlike that flow this never waits for a
+// settlement sweep, and unlike a future "leader/supervisor settlement"
+// feature (which will deliberately stay direct-generation-only to keep
+// separate ad campaigns apart financially) this view is purely informational
+// and always shows the full depth.
+export async function getLiveTeamOrdersByBranch(merchantId: number): Promise<LiveTeamBranch[]> {
+  const directs = await getDirectSubordinates(merchantId);
+  if (directs.length === 0) return [];
+
+  const db = await getDb();
+  if (!db) return [];
+
+  const { childrenByParent, roleById } = await buildMerchantHierarchyMaps();
+
+  const branches = directs.map(direct => {
+    const descendantIds = walkDescendantIds(childrenByParent, direct.id);
+    const roleCounts: Partial<Record<Merchant["role"], number>> = {};
+    for (const id of descendantIds) {
+      const role = roleById.get(id);
+      if (!role) continue;
+      roleCounts[role] = (roleCounts[role] ?? 0) + 1;
+    }
+    return { direct, ids: [direct.id, ...descendantIds], roleCounts };
+  });
+
+  const allIds = branches.flatMap(b => b.ids);
+  const rows = await db.select().from(physicalOrders)
+    .where(inArray(physicalOrders.merchantId, allIds))
+    .orderBy(desc(physicalOrders.createdAt));
+
+  const ordersByMerchantId = new Map<number, PhysicalOrder[]>();
+  for (const row of rows) {
+    const list = ordersByMerchantId.get(row.merchantId) ?? [];
+    list.push(row);
+    ordersByMerchantId.set(row.merchantId, list);
+  }
+
+  return branches.map(({ direct, ids, roleCounts }) => ({
+    merchant: direct,
+    roleCounts,
+    // Each per-merchant list is already newest-first (from the query above),
+    // but flattening across merchants interleaves them by merchant order, not
+    // date - re-sort so the branch's combined list is newest-first overall.
+    orders: ids.flatMap(id => ordersByMerchantId.get(id) ?? [])
+      .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime()),
+  }));
 }
 
 export interface SubordinatesSummary {

@@ -112,3 +112,37 @@ export async function notifyOwner(
     return false;
   }
 }
+
+/**
+ * Sends a WhatsApp message to the configured owner phone via CallMeBot's
+ * simple GET-based API. Returns `true` if the request was accepted, `false`
+ * when the upstream service can't be reached or isn't configured - callers
+ * should never let this fail the underlying business operation (see the
+ * try/catch wrapper at each call site).
+ */
+export async function sendWhatsAppNotification(message: string): Promise<boolean> {
+  if (!isNonEmptyString(message)) return false;
+
+  if (!ENV.callMeBotPhone || !ENV.callMeBotApiKey) {
+    console.warn("[WhatsApp] CALLMEBOT_PHONE/CALLMEBOT_APIKEY not configured - skipping notification.");
+    return false;
+  }
+
+  const url = new URL("https://api.callmebot.com/whatsapp.php");
+  url.searchParams.set("phone", ENV.callMeBotPhone);
+  url.searchParams.set("text", trimValue(message));
+  url.searchParams.set("apikey", ENV.callMeBotApiKey);
+
+  try {
+    const response = await fetch(url.toString());
+    if (!response.ok) {
+      const detail = await response.text().catch(() => "");
+      console.warn(`[WhatsApp] Failed to send notification (${response.status} ${response.statusText})${detail ? `: ${detail}` : ""}`);
+      return false;
+    }
+    return true;
+  } catch (error) {
+    console.warn("[WhatsApp] Error calling CallMeBot API:", error);
+    return false;
+  }
+}

@@ -3,7 +3,7 @@ import type { Request } from "express";
 import { TRPCError } from "@trpc/server";
 import { z } from "zod";
 import { getSessionCookieOptions, isSecureRequest } from "./_core/cookies";
-import { notifyOwner } from "./_core/notification";
+import { notifyOwner, sendWhatsAppNotification } from "./_core/notification";
 import { sdk } from "./_core/sdk";
 import { storagePut } from "./storage";
 import { systemRouter } from "./_core/systemRouter";
@@ -303,10 +303,9 @@ export const appRouter = router({
         });
         // Notify owner
         try {
-          await notifyOwner({
-            title: "طلب جديد - EBOMA",
-            content: `طلب جديد من التاجر ${input.merchantName}\nالعميل: ${input.customerName}\nالمنتج: ${input.productType}\nالكمية: ${input.quantity}\nالإجمالي: ${totalPrice}\nالعنوان: ${input.province} - ${input.district}`,
-          });
+          await sendWhatsAppNotification(
+            `طلب جديد - EBOMA\nطلب جديد من التاجر ${input.merchantName}\nالعميل: ${input.customerName}\nالمنتج: ${input.productType}\nالكمية: ${input.quantity}\nالإجمالي: ${totalPrice}\nالعنوان: ${input.province} - ${input.district}`
+          );
         } catch {}
         return order;
       }),
@@ -318,6 +317,26 @@ export const appRouter = router({
         // without canViewCosts — enforced here, not just hidden in the UI.
         return rows.map(o => db.maskPhysicalOrderForMerchant(o, ctx.merchant.canViewCosts));
       }),
+
+    // Merchant-facing: live (unsettled) view of the caller's ENTIRE
+    // subordinate tree's physical orders across every status, grouped by
+    // branch (one entry per direct subordinate, including everyone under
+    // them) - supervisor/leader/manager only, since sales_rep has no
+    // subordinates. Independent of profitSettlements - this never waits for
+    // a settlement sweep. Cost/profit fields are masked using the VIEWER's
+    // own canViewCosts (ctx.merchant), not the order-owning subordinate's -
+    // a per-product decision so an admin-trusted supervisor sees their
+    // team's margins without granting each subordinate that flag.
+    liveTeamOrders: merchantProcedure.query(async ({ ctx }) => {
+      if (ctx.merchant.role === "sales_rep") {
+        throw new TRPCError({ code: "FORBIDDEN", message: "هذه البيانات غير متاحة لمندوب المبيعات" });
+      }
+      const branches = await db.getLiveTeamOrdersByBranch(ctx.merchant.id);
+      return branches.map(b => ({
+        ...b,
+        orders: b.orders.map(o => db.maskPhysicalOrderForMerchant(o, ctx.merchant.canViewCosts)),
+      }));
+    }),
 
     list: appAdminProcedure.query(async () => {
       return await db.getAllPhysicalOrders();
