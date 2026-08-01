@@ -3,7 +3,7 @@ import type { Request } from "express";
 import { TRPCError } from "@trpc/server";
 import { z } from "zod";
 import { getSessionCookieOptions, isSecureRequest } from "./_core/cookies";
-import { notifyOwner, sendWhatsAppNotification } from "./_core/notification";
+import { notifyOwner, sendTelegramNotification } from "./_core/notification";
 import { sdk } from "./_core/sdk";
 import { storagePut } from "./storage";
 import { systemRouter } from "./_core/systemRouter";
@@ -303,7 +303,7 @@ export const appRouter = router({
         });
         // Notify owner
         try {
-          await sendWhatsAppNotification(
+          await sendTelegramNotification(
             `طلب جديد - EBOMA\nطلب جديد من التاجر ${input.merchantName}\nالعميل: ${input.customerName}\nالمنتج: ${input.productType}\nالكمية: ${input.quantity}\nالإجمالي: ${totalPrice}\nالعنوان: ${input.province} - ${input.district}`
           );
         } catch {}

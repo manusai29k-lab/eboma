@@ -146,3 +146,38 @@ export async function sendWhatsAppNotification(message: string): Promise<boolean
     return false;
   }
 }
+
+/**
+ * Sends a Telegram message to the configured chat via the Telegram Bot API.
+ * Returns `true` if the request was accepted, `false` when the upstream
+ * service can't be reached or isn't configured - callers should never let
+ * this fail the underlying business operation (see the try/catch wrapper at
+ * each call site).
+ */
+export async function sendTelegramNotification(message: string): Promise<boolean> {
+  if (!isNonEmptyString(message)) return false;
+
+  if (!ENV.telegramBotToken || !ENV.telegramChatId) {
+    console.warn("[Telegram] TELEGRAM_BOT_TOKEN/TELEGRAM_CHAT_ID not configured - skipping notification.");
+    return false;
+  }
+
+  const url = `https://api.telegram.org/bot${ENV.telegramBotToken}/sendMessage`;
+
+  try {
+    const response = await fetch(url, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ chat_id: ENV.telegramChatId, text: trimValue(message) }),
+    });
+    if (!response.ok) {
+      const detail = await response.text().catch(() => "");
+      console.warn(`[Telegram] Failed to send notification (${response.status} ${response.statusText})${detail ? `: ${detail}` : ""}`);
+      return false;
+    }
+    return true;
+  } catch (error) {
+    console.warn("[Telegram] Error calling Telegram Bot API:", error);
+    return false;
+  }
+}
