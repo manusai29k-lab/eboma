@@ -109,6 +109,10 @@ export const physicalProducts = mysqlTable("physical_products", {
   // physicalOrders row (see db.computeFrozenProductCosts).
   wholesaleCost: int("wholesaleCost"), // per-unit wholesale cost
   deliveryCost: int("deliveryCost"), // flat delivery cost per order, regardless of quantity
+  // Optional floor on productPrice at order-creation time (server/routers.ts
+  // physicalOrders.create) - nullable = no minimum, price stays fully free as
+  // today. No maximum ever exists.
+  minPrice: int("minPrice"),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
 });

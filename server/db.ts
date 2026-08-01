@@ -352,7 +352,7 @@ export async function updateAdminPasscode(id: number, hashedPasscode: string): P
 
 // ==================== Physical Products ====================
 
-export async function createPhysicalProduct(data: { name: string; price: number; type: string; description?: string; stock?: number; imageKey?: string; imageUrl?: string; wholesaleCost?: number; deliveryCost?: number }): Promise<PhysicalProduct> {
+export async function createPhysicalProduct(data: { name: string; price: number; type: string; description?: string; stock?: number; imageKey?: string; imageUrl?: string; wholesaleCost?: number; deliveryCost?: number; minPrice?: number }): Promise<PhysicalProduct> {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
   await db.insert(physicalProducts).values(data);
@@ -384,7 +384,7 @@ export async function getAllPhysicalProductsAdmin(): Promise<PhysicalProduct[]> 
   return await db.select().from(physicalProducts).orderBy(desc(physicalProducts.createdAt));
 }
 
-export async function updatePhysicalProduct(id: number, data: Partial<{ name: string; price: number; type: string; description?: string; stock: number; imageKey: string; imageUrl: string; wholesaleCost: number; deliveryCost: number }>): Promise<void> {
+export async function updatePhysicalProduct(id: number, data: Partial<{ name: string; price: number; type: string; description?: string; stock: number; imageKey: string; imageUrl: string; wholesaleCost: number; deliveryCost: number; minPrice: number }>): Promise<void> {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
   await db.update(physicalProducts).set(data).where(eq(physicalProducts.id, id));

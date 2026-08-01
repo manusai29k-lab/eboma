@@ -291,6 +291,12 @@ export const appRouter = router({
         // now, same principle as the commission freeze below — undefined
         // (no productId, or product since deleted) resolves to zero cost.
         const product = input.productId ? await db.getPhysicalProductById(input.productId) : undefined;
+        if (product?.minPrice != null && input.productPrice < product.minPrice) {
+          throw new TRPCError({
+            code: "BAD_REQUEST",
+            message: `السعر أقل من الحد الأدنى المسموح لهذا المنتج (${product.minPrice.toLocaleString()} د.ع)`,
+          });
+        }
         const costs = db.computeFrozenProductCosts(product, input.quantity, totalPrice);
         const order = await db.createPhysicalOrder({
           ...input,
@@ -466,6 +472,7 @@ export const appRouter = router({
         stock: z.number().int().default(0),
         wholesaleCost: z.number().int().min(0).optional(),
         deliveryCost: z.number().int().min(0).optional(),
+        minPrice: z.number().int().min(0).optional(),
         imageBase64: z.string().optional(),
         imageName: z.string().optional(),
       }))
@@ -485,6 +492,7 @@ export const appRouter = router({
         stock: z.number().int().optional(),
         wholesaleCost: z.number().int().min(0).optional(),
         deliveryCost: z.number().int().min(0).optional(),
+        minPrice: z.number().int().min(0).optional(),
         imageBase64: z.string().optional(),
         imageName: z.string().optional(),
       }))

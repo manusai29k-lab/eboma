@@ -85,6 +85,13 @@
       "when": 1785598632800,
       "tag": "0011_deep_dracula",
       "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "5",
+      "when": 1785620531607,
+      "tag": "0012_curious_katie_power",
+      "breakpoints": true
     }
   ]
 }

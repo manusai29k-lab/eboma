@@ -291,8 +291,8 @@ function PhysicalProductDialog({
 }: {
   title: string;
   trigger: React.ReactNode;
-  initial?: { name: string; price: number; type: string; description?: string | null; stock?: number; imageUrl?: string | null; wholesaleCost?: number | null; deliveryCost?: number | null };
-  onSubmit: (data: { name: string; price: number; type: string; description?: string; stock: number; wholesaleCost?: number; deliveryCost?: number; imageBase64?: string; imageName?: string }) => void;
+  initial?: { name: string; price: number; type: string; description?: string | null; stock?: number; imageUrl?: string | null; wholesaleCost?: number | null; deliveryCost?: number | null; minPrice?: number | null };
+  onSubmit: (data: { name: string; price: number; type: string; description?: string; stock: number; wholesaleCost?: number; deliveryCost?: number; minPrice?: number; imageBase64?: string; imageName?: string }) => void;
 }) {
   const [open, setOpen] = useState(false);
   const [name, setName] = useState(initial?.name ?? "");
@@ -302,6 +302,7 @@ function PhysicalProductDialog({
   const [stock, setStock] = useState(initial?.stock !== undefined ? String(initial.stock) : "0");
   const [wholesaleCost, setWholesaleCost] = useState(initial?.wholesaleCost != null ? String(initial.wholesaleCost) : "");
   const [deliveryCost, setDeliveryCost] = useState(initial?.deliveryCost != null ? String(initial.deliveryCost) : "");
+  const [minPrice, setMinPrice] = useState(initial?.minPrice != null ? String(initial.minPrice) : "");
   const [imagePreview, setImagePreview] = useState<string | null>(initial?.imageUrl ?? null);
   const [imageName, setImageName] = useState<string | undefined>(undefined);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -329,6 +330,7 @@ function PhysicalProductDialog({
       stock: parseInt(stock) || 0,
       wholesaleCost: wholesaleCost ? parseInt(wholesaleCost) : undefined,
       deliveryCost: deliveryCost ? parseInt(deliveryCost) : undefined,
+      minPrice: minPrice ? parseInt(minPrice) : undefined,
       imageBase64: imageName ? (imagePreview ?? undefined) : undefined,
       imageName,
     });
@@ -373,6 +375,10 @@ function PhysicalProductDialog({
               <Label htmlFor="pp-type">النوع *</Label>
               <Input id="pp-type" value={type} onChange={(e) => setType(e.target.value)} placeholder="مثال: ملابس، إلكترونيات" />
             </div>
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor="pp-min-price">الحد الأدنى للسعر (د.ع) - اختياري</Label>
+            <Input id="pp-min-price" type="number" value={minPrice} onChange={(e) => setMinPrice(e.target.value)} dir="ltr" className="text-end w-40" />
           </div>
           <div className="space-y-2">
             <Label htmlFor="pp-stock">كمية المخزون</Label>
