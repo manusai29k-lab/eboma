@@ -2,6 +2,8 @@ import { trpc } from "@/lib/trpc";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
@@ -9,7 +11,39 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from 
 import { Package, Smartphone, Eye } from "lucide-react";
 import { toast } from "sonner";
 import { useLocation } from "wouter";
-import { useState } from "react";
+import { useState, useMemo } from "react";
+
+type QuickPeriod = "today" | "last2days" | "week" | "month" | "all";
+
+const QUICK_PERIOD_LABELS: Record<QuickPeriod, string> = {
+  today: "اليوم",
+  last2days: "آخر يومين",
+  week: "هذا الأسبوع",
+  month: "هذا الشهر",
+  all: "الكل",
+};
+
+// Client-side only - no server/schema changes. Iraqi week starts Saturday.
+function getQuickPeriodRange(period: QuickPeriod): { start: Date | null; end: Date | null } {
+  const now = new Date();
+  const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  if (period === "today") return { start: startOfToday, end: now };
+  if (period === "last2days") {
+    const s = new Date(startOfToday);
+    s.setDate(s.getDate() - 1);
+    return { start: s, end: now };
+  }
+  if (period === "week") {
+    const s = new Date(startOfToday);
+    const diff = (s.getDay() + 1) % 7; // Saturday=6 -> 0
+    s.setDate(s.getDate() - diff);
+    return { start: s, end: now };
+  }
+  if (period === "month") {
+    return { start: new Date(now.getFullYear(), now.getMonth(), 1), end: now };
+  }
+  return { start: null, end: null };
+}
 
 const STATUS_LABELS: Record<string, string> = {
   new: "جديد",
@@ -33,10 +67,49 @@ export default function AdminOrders() {
   const [, setLocation] = useLocation();
   const [selectedProof, setSelectedProof] = useState<string | null>(null);
 
-
+  // Physical orders filter bar - all client-side, no server/schema changes
+  // (physicalOrders.list already loads every order, no pagination).
+  const [searchMerchant, setSearchMerchant] = useState("");
+  const [searchAddress, setSearchAddress] = useState(""); // matches province OR district
+  const [productFilter, setProductFilter] = useState("all");
+  const [statusFilter, setStatusFilter] = useState("all");
+  const [quickPeriod, setQuickPeriod] = useState<QuickPeriod>("week"); // default on page open
+  const [customStart, setCustomStart] = useState("");
+  const [customEnd, setCustomEnd] = useState("");
 
   const physicalOrders = trpc.physicalOrders.list.useQuery(undefined, { refetchOnWindowFocus: false });
   const digitalSales = trpc.digitalSales.list.useQuery(undefined, { refetchOnWindowFocus: false });
+
+  const productOptions = useMemo(() => {
+    return Array.from(new Set((physicalOrders.data ?? []).map(o => o.productType)));
+  }, [physicalOrders.data]);
+
+  const hasCustomRange = customStart !== "" || customEnd !== "";
+  const { start: periodStart, end: periodEnd } = hasCustomRange
+    ? { start: customStart ? new Date(customStart) : null, end: customEnd ? new Date(customEnd + "T23:59:59") : null }
+    : getQuickPeriodRange(quickPeriod);
+
+  const filteredPhysicalOrders = useMemo(() => {
+    return (physicalOrders.data ?? []).filter(o => {
+      if (searchMerchant && !o.merchantName.toLowerCase().includes(searchMerchant.trim().toLowerCase())) return false;
+      if (searchAddress) {
+        const addr = `${o.province} ${o.district}`.toLowerCase();
+        if (!addr.includes(searchAddress.trim().toLowerCase())) return false;
+      }
+      if (productFilter !== "all" && o.productType !== productFilter) return false;
+      if (statusFilter !== "all" && o.status !== statusFilter) return false;
+      const created = new Date(o.createdAt);
+      if (periodStart && created < periodStart) return false;
+      if (periodEnd && created > periodEnd) return false;
+      return true;
+    });
+  }, [physicalOrders.data, searchMerchant, searchAddress, productFilter, statusFilter, periodStart, periodEnd]);
+
+  const handleQuickPeriodClick = (period: QuickPeriod) => {
+    setQuickPeriod(period);
+    setCustomStart("");
+    setCustomEnd("");
+  };
 
   const updateStatusMutation = trpc.physicalOrders.updateStatus.useMutation({
     onSuccess: () => {
@@ -67,9 +140,80 @@ export default function AdminOrders() {
 
         {/* Physical Orders */}
         <TabsContent value="physical">
+          <Card className="shadow-sm mb-4">
+            <CardContent className="pt-6 space-y-4">
+              <div className="grid gap-4 md:grid-cols-4">
+                <div className="space-y-2">
+                  <Label>بحث بالمندوب</Label>
+                  <Input placeholder="اسم التاجر..." value={searchMerchant} onChange={(e) => setSearchMerchant(e.target.value)} />
+                </div>
+                <div className="space-y-2">
+                  <Label>بحث بالمحافظة/العنوان</Label>
+                  <Input placeholder="مثال: بغداد، الكرادة..." value={searchAddress} onChange={(e) => setSearchAddress(e.target.value)} />
+                </div>
+                <div className="space-y-2">
+                  <Label>المنتج</Label>
+                  <Select value={productFilter} onValueChange={setProductFilter}>
+                    <SelectTrigger><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">كل المنتجات</SelectItem>
+                      {productOptions.map(p => (
+                        <SelectItem key={p} value={p}>{p}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-2">
+                  <Label>الحالة</Label>
+                  <Select value={statusFilter} onValueChange={setStatusFilter}>
+                    <SelectTrigger><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">كل الحالات</SelectItem>
+                      {Object.entries(STATUS_LABELS).map(([value, label]) => (
+                        <SelectItem key={value} value={value}>{label}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
+
+              <div className="space-y-2">
+                <Label>الفترة</Label>
+                <div className="flex flex-wrap gap-2">
+                  {(Object.keys(QUICK_PERIOD_LABELS) as QuickPeriod[]).map(p => (
+                    <Button
+                      key={p}
+                      type="button"
+                      size="sm"
+                      variant={!hasCustomRange && quickPeriod === p ? "default" : "outline"}
+                      onClick={() => handleQuickPeriodClick(p)}
+                    >
+                      {QUICK_PERIOD_LABELS[p]}
+                    </Button>
+                  ))}
+                </div>
+              </div>
+
+              <div className="grid gap-4 md:grid-cols-2 max-w-md">
+                <div className="space-y-2">
+                  <Label>من تاريخ (فترة مخصصة)</Label>
+                  <Input type="date" value={customStart} onChange={(e) => setCustomStart(e.target.value)} />
+                </div>
+                <div className="space-y-2">
+                  <Label>إلى تاريخ</Label>
+                  <Input type="date" value={customEnd} onChange={(e) => setCustomEnd(e.target.value)} />
+                </div>
+              </div>
+
+              <p className="text-xs text-muted-foreground">
+                عرض {filteredPhysicalOrders.length} من أصل {physicalOrders.data?.length ?? 0} طلباً
+              </p>
+            </CardContent>
+          </Card>
+
           <Card className="shadow-sm">
             <CardContent className="p-0">
-              {physicalOrders.data && physicalOrders.data.length > 0 ? (
+              {filteredPhysicalOrders.length > 0 ? (
                 <div className="overflow-x-auto">
                   <Table>
                     <TableHeader>
@@ -86,7 +230,7 @@ export default function AdminOrders() {
                       </TableRow>
                     </TableHeader>
                     <TableBody>
-                      {physicalOrders.data.map((order) => (
+                      {filteredPhysicalOrders.map((order) => (
                         <TableRow key={order.id}>
                           <TableCell className="font-medium">#{order.id}</TableCell>
                           <TableCell>{order.merchantName}</TableCell>
@@ -130,7 +274,9 @@ export default function AdminOrders() {
                   </Table>
                 </div>
               ) : (
-                <p className="text-center text-muted-foreground py-12">لا توجد طلبات مادية</p>
+                <p className="text-center text-muted-foreground py-12">
+                  {physicalOrders.data && physicalOrders.data.length > 0 ? "لا توجد طلبات مطابقة للفلاتر المحددة" : "لا توجد طلبات مادية"}
+                </p>
               )}
             </CardContent>
           </Card>
