@@ -9,9 +9,12 @@ import {
   Loader2, Package, User,
 } from "lucide-react";
 import { toast } from "sonner";
+import { useLanguage } from "@/contexts/LanguageContext";
+import { LanguageSwitcher } from "@/components/LanguageSwitcher";
 
 export default function Login() {
   const [location, setLocation] = useLocation();
+  const { t } = useLanguage();
   const { user, loading } = useAuth();
   const [loginUsername, setLoginUsername] = useState("");
   const [loginPasscode, setLoginPasscode] = useState("");
@@ -37,11 +40,11 @@ export default function Login() {
 
   const loginMutation = trpc.merchant.login.useMutation({
     onSuccess: (data) => {
-      toast.success(`مرحباً ${data.name}`);
+      toast.success(t.login.loginSuccess(data.name));
       setLocation("/merchant");
     },
     onError: (error: any) => {
-      toast.error(error.message || "فشل تسجيل الدخول");
+      toast.error(error.message || t.login.loginFailed);
       setIsLoginLoading(false);
     },
   });
@@ -49,7 +52,7 @@ export default function Login() {
   const handleLogin = (e: React.FormEvent) => {
     e.preventDefault();
     if (!loginUsername || !loginPasscode) {
-      toast.error("يرجى ملء جميع الحقول");
+      toast.error(t.login.fillAllFields);
       return;
     }
     setIsLoginLoading(true);
@@ -71,9 +74,10 @@ export default function Login() {
             </div>
             <div>
               <h1 className="text-xl font-extrabold tracking-tight text-white leading-none">EBOMA</h1>
-              <p className="text-[10px] text-white/40 mt-0.5">نظام إدارة الطلبات</p>
+              <p className="text-[10px] text-white/40 mt-0.5">{t.login.subtitle}</p>
             </div>
           </div>
+          <LanguageSwitcher />
         </div>
       </header>
 
@@ -89,18 +93,18 @@ export default function Login() {
               <div className="inline-flex items-center justify-center w-16 h-16 rounded-2xl bg-gradient-to-br from-violet-500 to-purple-700 shadow-lg shadow-violet-500/30 mb-4">
                 <Package className="w-8 h-8 text-white" />
               </div>
-              <h2 className="text-2xl font-bold text-white">نظام إدارة الطلبات - EBOMA</h2>
-              <p className="text-sm text-white/50 mt-2">سجّل دخولك لإدارة طلباتك ومتابعة مبيعاتك</p>
+              <h2 className="text-2xl font-bold text-white">{t.login.heading}</h2>
+              <p className="text-sm text-white/50 mt-2">{t.login.description}</p>
             </div>
 
             {/* Login Form */}
             <form onSubmit={handleLogin} className="space-y-5">
               <div className="space-y-2">
-                <Label htmlFor="login-username" className="text-white/70 text-sm">اسم المستخدم</Label>
+                <Label htmlFor="login-username" className="text-white/70 text-sm">{t.login.usernameLabel}</Label>
                 <Input
                   id="login-username"
                   type="text"
-                  placeholder="أدخل اسم المستخدم"
+                  placeholder={t.login.usernamePlaceholder}
                   value={loginUsername}
                   onChange={(e) => setLoginUsername(e.target.value)}
                   disabled={isLoginLoading}
@@ -108,11 +112,11 @@ export default function Login() {
                 />
               </div>
               <div className="space-y-2">
-                <Label htmlFor="login-passcode" className="text-white/70 text-sm">كلمة السر</Label>
+                <Label htmlFor="login-passcode" className="text-white/70 text-sm">{t.login.passwordLabel}</Label>
                 <Input
                   id="login-passcode"
                   type="password"
-                  placeholder="أدخل كلمة السر"
+                  placeholder={t.login.passwordPlaceholder}
                   value={loginPasscode}
                   onChange={(e) => setLoginPasscode(e.target.value)}
                   disabled={isLoginLoading}
@@ -125,9 +129,9 @@ export default function Login() {
                 disabled={isLoginLoading}
               >
                 {isLoginLoading ? (
-                  <><Loader2 className="w-4 h-4 animate-spin ms-2" /> جاري التحقق...</>
+                  <><Loader2 className="w-4 h-4 animate-spin ms-2" /> {t.login.verifying}</>
                 ) : (
-                  <><User className="w-4 h-4 ms-2" /> دخول</>
+                  <><User className="w-4 h-4 ms-2" /> {t.login.submit}</>
                 )}
               </Button>
             </form>
@@ -139,7 +143,7 @@ export default function Login() {
       <footer className="relative z-10 border-t border-white/5 py-6">
         <div className="container text-center">
           <p className="text-sm text-white/30">
-            EBOMA © 2026 - جميع الحقوق محفوظة - المؤسس والمدير IBRAHIM WALEED
+            {t.login.footer}
           </p>
         </div>
       </footer>

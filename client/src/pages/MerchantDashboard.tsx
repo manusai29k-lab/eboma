@@ -4,9 +4,12 @@ import { useLocation } from "wouter";
 import { Package, Smartphone, ListOrdered, LogOut, ArrowLeft, Sparkles, Wallet, Users } from "lucide-react";
 import { toast } from "sonner";
 import { useEffect } from "react";
+import { useLanguage } from "@/contexts/LanguageContext";
+import { LanguageSwitcher } from "@/components/LanguageSwitcher";
 
 export default function MerchantDashboard() {
   const [, setLocation] = useLocation();
+  const { t } = useLanguage();
   const merchantMe = trpc.merchant.me.useQuery(undefined, {
     refetchOnWindowFocus: false,
     retry: false,
@@ -14,7 +17,7 @@ export default function MerchantDashboard() {
 
   const logoutMutation = trpc.merchant.logout.useMutation({
     onSuccess: () => {
-      toast.success("تم تسجيل الخروج");
+      toast.success(t.common.logoutSuccess);
       setLocation("/");
     },
   });
@@ -32,7 +35,7 @@ export default function MerchantDashboard() {
   if (merchantMe.isLoading || !merchantMe.data) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-[#060814]">
-        <p className="text-white/40">جاري التحميل...</p>
+        <p className="text-white/40">{t.common.loading}</p>
       </div>
     );
   }
@@ -54,10 +57,11 @@ export default function MerchantDashboard() {
             </div>
             <div>
               <h1 className="text-xl font-extrabold tracking-tight text-white leading-none">EBOMA</h1>
-              <p className="text-[10px] text-white/40 mt-0.5">نظام إدارة المبيعات</p>
+              <p className="text-[10px] text-white/40 mt-0.5">{t.merchantDashboard.subtitle}</p>
             </div>
           </div>
           <div className="flex items-center gap-3">
+            <LanguageSwitcher />
             <div className="text-left">
               <p className="text-sm font-medium text-white">{merchant.name}</p>
               <p className="text-xs text-white/40" dir="ltr">{merchant.username}</p>
@@ -66,7 +70,7 @@ export default function MerchantDashboard() {
               variant="ghost"
               size="icon"
               onClick={() => logoutMutation.mutate()}
-              title="تسجيل الخروج"
+              title={t.common.logout}
               className="text-white/50 hover:text-white hover:bg-white/5"
             >
               <LogOut className="w-4 h-4" />
@@ -80,14 +84,14 @@ export default function MerchantDashboard() {
         <div className="max-w-5xl mx-auto">
           {/* Founder Section */}
           <div className="text-center mb-10">
-            <h1 className="text-4xl md:text-6xl font-black text-white tracking-tight leading-tight">
+            <h1 className="text-4xl md:text-6xl font-black text-white tracking-tight leading-tight font-latin-fixed">
               IBRAHIM WALEED
             </h1>
-            <p className="mt-2 text-lg md:text-2xl font-bold tracking-wide bg-gradient-to-l from-violet-300 to-purple-400 bg-clip-text text-transparent">
-              المؤسس والمدير التنفيذي - EBOMA
+            <p className="mt-2 text-lg md:text-2xl font-bold bg-gradient-to-l from-violet-300 to-purple-400 bg-clip-text text-transparent">
+              {t.merchantDashboard.founderTitle}
             </p>
             <p className="mt-4 max-w-2xl mx-auto text-sm md:text-base text-white/60 leading-relaxed">
-              أول منصة شراكة تجارية بنظام عمولة ونسبة أرباح بالعراق وكوردستان — نمنحك فرصة البيع دون رأس مال، ونتشارك النجاح معك
+              {t.merchantDashboard.tagline}
             </p>
 
             {/* Trust Indicators */}
@@ -96,14 +100,14 @@ export default function MerchantDashboard() {
                 <p className="text-3xl font-black bg-gradient-to-l from-violet-400 to-purple-400 bg-clip-text text-transparent">
                   {trustStats.data ? `${trustStats.data.totalMerchants + 30}+` : "..."}
                 </p>
-                <p className="text-xs text-white/40 mt-1">تاجر مسجّل</p>
+                <p className="text-xs text-white/40 mt-1">{t.merchantDashboard.registeredMerchants}</p>
               </div>
               <div className="rounded-2xl bg-white/[0.03] border border-violet-500/20 px-6 py-4 min-w-[140px]">
                 <p className="text-3xl font-black bg-gradient-to-l from-violet-400 to-purple-400 bg-clip-text text-transparent">
                   {/* Placeholder until real order volume is meaningful — replace with trustStats.data.totalCompletedOrders */}
                   9000
                 </p>
-                <p className="text-xs text-white/40 mt-1">طلب منجز</p>
+                <p className="text-xs text-white/40 mt-1">{t.merchantDashboard.completedOrders}</p>
               </div>
             </div>
           </div>
@@ -112,12 +116,12 @@ export default function MerchantDashboard() {
           <div className="text-center mb-10">
             <div className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-violet-500/10 border border-violet-500/30 text-violet-300 text-sm mb-4">
               <Sparkles className="w-4 h-4" />
-              مرحباً بك في لوحة التاجر
+              {t.merchantDashboard.welcomeBadge}
             </div>
             <h2 className="text-3xl font-extrabold text-white mb-3">
-              أهلاً {merchant.name}
+              {t.merchantDashboard.greeting(merchant.name)}
             </h2>
-            <p className="text-white/50 text-lg">اختر نوع العملية التي تريد تسجيلها</p>
+            <p className="text-white/50 text-lg">{t.merchantDashboard.chooseOperation}</p>
           </div>
 
           {/* Choice Card - only the merchant's own type (physical XOR digital, never both) */}
@@ -134,14 +138,14 @@ export default function MerchantDashboard() {
                   <div className="flex items-center justify-center w-16 h-16 rounded-2xl bg-gradient-to-br from-violet-500 to-purple-700 shadow-lg shadow-violet-500/30 mx-auto mb-5">
                     <Package className="w-8 h-8 text-white" />
                   </div>
-                  <h3 className="text-xl font-bold text-white text-center mb-2">منتج مادي</h3>
+                  <h3 className="text-xl font-bold text-white text-center mb-2">{t.merchantDashboard.physicalTitle}</h3>
                   <p className="text-sm text-white/50 text-center leading-relaxed mb-6">
-                    تسجيل طلب لمنتج مادي يتطلب التوصيل - أدخل بيانات العميل والمنتج والعنوان
+                    {t.merchantDashboard.physicalDescription}
                   </p>
                   <Button
                     className="w-full bg-gradient-to-l from-violet-600 to-purple-600 hover:from-violet-500 hover:to-purple-500 text-white border-0 shadow-lg shadow-violet-600/20 transition-all duration-200 active:scale-[0.98]"
                   >
-                    تسجيل طلب جديد
+                    {t.merchantDashboard.physicalCta}
                     <ArrowLeft className="w-4 h-4 ms-2" />
                   </Button>
                 </div>
@@ -158,14 +162,14 @@ export default function MerchantDashboard() {
                   <div className="flex items-center justify-center w-16 h-16 rounded-2xl bg-gradient-to-br from-emerald-500 to-teal-700 shadow-lg shadow-emerald-500/30 mx-auto mb-5">
                     <Smartphone className="w-8 h-8 text-white" />
                   </div>
-                  <h3 className="text-xl font-bold text-white text-center mb-2">منتج رقمي</h3>
+                  <h3 className="text-xl font-bold text-white text-center mb-2">{t.merchantDashboard.digitalTitle}</h3>
                   <p className="text-sm text-white/50 text-center leading-relaxed mb-6">
-                    توثيق بيع منتج رقمي (كورس، كتاب) مع إثبات التحويل - التسليم فوري بدون توصيل
+                    {t.merchantDashboard.digitalDescription}
                   </p>
                   <Button
                     className="w-full bg-gradient-to-l from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white border-0 shadow-lg shadow-emerald-600/20 transition-all duration-200 active:scale-[0.98]"
                   >
-                    توثيق عملية بيع
+                    {t.merchantDashboard.digitalCta}
                     <ArrowLeft className="w-4 h-4 ms-2" />
                   </Button>
                 </div>
@@ -184,8 +188,8 @@ export default function MerchantDashboard() {
                   <ListOrdered className="w-6 h-6 text-white" />
                 </div>
                 <div>
-                  <p className="font-bold text-white">طلباتي السابقة</p>
-                  <p className="text-sm text-white/40">عرض جميع طلباتك السابقة وحالتها</p>
+                  <p className="font-bold text-white">{t.common.myOrders}</p>
+                  <p className="text-sm text-white/40">{t.merchantDashboard.myOrdersDescription}</p>
                 </div>
               </div>
               <ArrowLeft className="w-5 h-5 text-white/30 group-hover:text-white/60 group-hover:-translate-x-1 transition-all" />
@@ -203,9 +207,9 @@ export default function MerchantDashboard() {
                   <Wallet className="w-6 h-6 text-white" />
                 </div>
                 <div>
-                  <p className="font-bold text-white">أرباحي</p>
-                  <p className="text-sm text-white/40">رصيدك الحالي وسجل التسويات</p>
-                  <p className="text-xs text-white/25 mt-1">لا يشمل تسويات الأرباح الهرمية — راجع "أرباح الفريق"</p>
+                  <p className="font-bold text-white">{t.merchantDashboard.earningsTitle}</p>
+                  <p className="text-sm text-white/40">{t.merchantDashboard.earningsDescription}</p>
+                  <p className="text-xs text-white/25 mt-1">{t.merchantDashboard.earningsNote}</p>
                 </div>
               </div>
               <ArrowLeft className="w-5 h-5 text-white/30 group-hover:text-white/60 group-hover:-translate-x-1 transition-all" />
@@ -223,8 +227,8 @@ export default function MerchantDashboard() {
                   <Users className="w-6 h-6 text-white" />
                 </div>
                 <div>
-                  <p className="font-bold text-white">أرباح الفريق</p>
-                  <p className="text-sm text-white/40">تسوياتك وأداء فريقك</p>
+                  <p className="font-bold text-white">{t.merchantDashboard.teamProfitsTitle}</p>
+                  <p className="text-sm text-white/40">{t.merchantDashboard.teamProfitsDescription}</p>
                 </div>
               </div>
               <ArrowLeft className="w-5 h-5 text-white/30 group-hover:text-white/60 group-hover:-translate-x-1 transition-all" />
@@ -237,7 +241,7 @@ export default function MerchantDashboard() {
       <footer className="relative z-10 border-t border-white/5 py-6 mt-8">
         <div className="container text-center">
           <p className="text-sm text-white/30">
-            EBOMA © 2026 - المؤسس والمدير IBRAHIM WALEED
+            {t.merchantDashboard.footer}
           </p>
         </div>
       </footer>

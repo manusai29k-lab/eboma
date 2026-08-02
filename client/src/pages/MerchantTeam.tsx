@@ -9,21 +9,13 @@ import { ROLE_CONFIG } from "@/lib/merchantRoles";
 import { useLocation } from "wouter";
 import { ArrowRight, Users, TrendingUp, Layers, Wallet, Radio } from "lucide-react";
 import { useEffect, useState } from "react";
+import { useLanguage } from "@/contexts/LanguageContext";
+import { LanguageSwitcher } from "@/components/LanguageSwitcher";
+import type { TranslationKeys } from "@/i18n";
 
-const STATUS_BADGE: Record<string, { label: string; className: string }> = {
-  draft: { label: "مسودة", className: "bg-amber-500/20 text-amber-300 border border-amber-500/30" },
-  confirmed: { label: "مؤكدة", className: "bg-emerald-500/20 text-emerald-300 border border-emerald-500/30" },
-};
-
-// Same labels/colors as MerchantOrders.tsx's physical order status map -
-// kept as a separate copy here since that file doesn't export them.
-const ORDER_STATUS_LABELS: Record<string, string> = {
-  new: "جديد",
-  preparing: "قيد التجهيز",
-  shipped: "تم الشحن",
-  delivered: "تم التسليم",
-  cancelled: "ملغي",
-  returned: "مرتجع",
+const STATUS_BADGE_CLASSNAME: Record<string, string> = {
+  draft: "bg-amber-500/20 text-amber-300 border border-amber-500/30",
+  confirmed: "bg-emerald-500/20 text-emerald-300 border border-emerald-500/30",
 };
 
 const ORDER_STATUS_COLORS: Record<string, string> = {
@@ -44,26 +36,19 @@ function formatPeriod(start: string | Date, end: string | Date) {
   return `${new Date(start).toLocaleDateString("ar-IQ")} - ${new Date(end).toLocaleDateString("ar-IQ")}`;
 }
 
-// [singular incl. "واحد", dual, plural] - manager never appears here (it's
-// the top role, so it can never be someone's descendant).
-const ROLE_COUNT_WORDS: Record<string, [string, string, string]> = {
-  sales_rep: ["مندوب واحد", "مندوبان", "مندوبين"],
-  supervisor: ["مشرف واحد", "مشرفان", "مشرفين"],
-  leader: ["قائد واحد", "قائدان", "قادة"],
-  manager: ["مدير واحد", "مديران", "مديرين"],
-};
-
 // Renders a branch's role breakdown bottom-up (sales_rep, then supervisor,
 // then leader) e.g. "3 مندوبين، مشرف واحد" - dynamic per the actual roles
 // present in that branch, since a leader's branch can mix supervisors and
-// sales_reps while a manager's can mix all three.
-function formatRoleCounts(roleCounts: Partial<Record<string, number>>): string {
-  const order = ["sales_rep", "supervisor", "leader"];
+// sales_reps while a manager's can mix all three. roleCountWords is passed
+// in (rather than read from a module constant) since this is a plain
+// function, not a component, and can't call useLanguage() itself.
+function formatRoleCounts(roleCounts: Partial<Record<string, number>>, roleCountWords: TranslationKeys["merchantTeam"]["roleCountWords"]): string {
+  const order = ["sales_rep", "supervisor", "leader"] as const;
   return order
     .filter(role => (roleCounts[role] ?? 0) > 0)
     .map(role => {
       const n = roleCounts[role]!;
-      const [singular, dual, plural] = ROLE_COUNT_WORDS[role];
+      const [singular, dual, plural] = roleCountWords[role];
       if (n === 1) return singular;
       if (n === 2) return dual;
       return `${n} ${plural}`;
@@ -72,7 +57,9 @@ function formatRoleCounts(roleCounts: Partial<Record<string, number>>): string {
 }
 
 function SettlementRow({ settlement, viewerRole }: { settlement: any; viewerRole?: string }) {
-  const status = STATUS_BADGE[settlement.status] ?? STATUS_BADGE.draft;
+  const { t } = useLanguage();
+  const statusLabel = t.merchantTeam.settlementStatus[settlement.status as keyof typeof t.merchantTeam.settlementStatus] ?? t.merchantTeam.settlementStatus.draft;
+  const statusClassName = STATUS_BADGE_CLASSNAME[settlement.status] ?? STATUS_BADGE_CLASSNAME.draft;
   const grossProfit = formatMoney(settlement.grossProfit);
   const promotionCost = formatMoney(settlement.promotionCost);
   const managerOverrideShare = formatMoney(settlement.managerOverrideShare);
@@ -85,23 +72,23 @@ function SettlementRow({ settlement, viewerRole }: { settlement: any; viewerRole
       <div className="flex items-start justify-between gap-4 flex-wrap">
         <div className="space-y-1">
           <div className="flex items-center gap-2">
-            <Badge className={status.className}>{status.label}</Badge>
+            <Badge className={statusClassName}>{statusLabel}</Badge>
             <span className="text-xs text-white/30">{formatPeriod(settlement.periodStart, settlement.periodEnd)}</span>
           </div>
           {(grossProfit !== null || promotionCost !== null) && (
             <p className="text-sm text-white/50">
-              {grossProfit !== null && <>إجمالي الربح: <span className="text-white/70">{grossProfit} د.ع</span></>}
-              {promotionCost !== null && <span className="ms-3">تكلفة الترويج: <span className="text-white/70">{promotionCost} د.ع</span></span>}
+              {grossProfit !== null && <>{t.merchantTeam.grossProfitLabel}<span className="text-white/70">{grossProfit} {t.common.currency}</span></>}
+              {promotionCost !== null && <span className="ms-3">{t.merchantTeam.promotionCostLabel}<span className="text-white/70">{promotionCost} {t.common.currency}</span></span>}
             </p>
           )}
           {managerOverrideShare !== null && (
-            <p className="text-sm text-white/50">حصة المدير: <span className="text-white/70">{managerOverrideShare} د.ع</span></p>
+            <p className="text-sm text-white/50">{t.merchantTeam.managerShareLabel}<span className="text-white/70">{managerOverrideShare} {t.common.currency}</span></p>
           )}
         </div>
         <div className="text-start shrink-0">
-          <p className="text-lg font-bold text-purple-300">{formatMoney(settlement.merchantShare)} د.ع</p>
+          <p className="text-lg font-bold text-purple-300">{formatMoney(settlement.merchantShare)} {t.common.currency}</p>
           {showNetProfit && (
-            <p className="text-xs text-white/30 mt-1">صافي الربح: {formatMoney(settlement.netProfit)} د.ع</p>
+            <p className="text-xs text-white/30 mt-1">{t.merchantTeam.netProfitLabel}{formatMoney(settlement.netProfit)} {t.common.currency}</p>
           )}
         </div>
       </div>
@@ -111,6 +98,7 @@ function SettlementRow({ settlement, viewerRole }: { settlement: any; viewerRole
 
 export default function MerchantTeam() {
   const [, setLocation] = useLocation();
+  const { t } = useLanguage();
   const merchantMe = trpc.merchant.me.useQuery(undefined, {
     refetchOnWindowFocus: false,
     retry: false,
@@ -178,7 +166,7 @@ export default function MerchantTeam() {
   if (merchantMe.isLoading || !merchantMe.data) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-[#060814]">
-        <p className="text-white/40">جاري التحميل...</p>
+        <p className="text-white/40">{t.common.loading}</p>
       </div>
     );
   }
@@ -198,10 +186,11 @@ export default function MerchantTeam() {
               <Users className="w-4 h-4 text-white" />
             </div>
             <div>
-              <h1 className="text-lg font-bold text-white">أرباح الفريق</h1>
+              <h1 className="text-lg font-bold text-white">{t.merchantTeam.pageTitle}</h1>
               {role && <div className="mt-0.5"><RoleBadge role={role} /></div>}
             </div>
           </div>
+          <LanguageSwitcher className="ms-auto" />
         </div>
       </header>
 
@@ -214,20 +203,20 @@ export default function MerchantTeam() {
           <section>
             <h2 className="flex items-center gap-2 text-lg font-bold text-white mb-4">
               <Wallet className="w-5 h-5 text-emerald-300" />
-              رصيدي الحالي
+              {t.merchantTeam.currentBalanceTitle}
             </h2>
 
             <div className="rounded-2xl bg-white/[0.03] border border-emerald-500/20 p-6 mb-6 text-center">
               <p className="text-3xl font-black text-emerald-300">
-                {myBalance.isLoading ? "..." : `${formatMoney(myBalance.data ?? 0)} د.ع`}
+                {myBalance.isLoading ? "..." : `${formatMoney(myBalance.data ?? 0)} ${t.common.currency}`}
               </p>
-              <p className="text-xs text-white/40 mt-1">الرصيد المستحق غير المدفوع</p>
+              <p className="text-xs text-white/40 mt-1">{t.merchantTeam.outstandingBalance}</p>
             </div>
 
             <div className="space-y-3 mb-6">
-              <h3 className="text-sm font-semibold text-white/50">سجل الدفعات</h3>
+              <h3 className="text-sm font-semibold text-white/50">{t.merchantTeam.payoutHistory}</h3>
               {myPayouts.isLoading ? (
-                <p className="text-center text-white/40 py-4">جاري التحميل...</p>
+                <p className="text-center text-white/40 py-4">{t.common.loading}</p>
               ) : myPayouts.data && myPayouts.data.length > 0 ? (
                 <div className="space-y-3">
                   {myPayouts.data.map(p => (
@@ -237,26 +226,26 @@ export default function MerchantTeam() {
                         {p.note && <p className="text-xs text-white/30 mt-1">{p.note}</p>}
                       </div>
                       <div className="flex items-center gap-3">
-                        {p.proofUrl && <ImageLightbox src={p.proofUrl} alt="إثبات الدفع" className="max-h-12 rounded-lg border border-white/10" />}
+                        {p.proofUrl && <ImageLightbox src={p.proofUrl} alt={t.merchantTeam.paymentProofAlt} className="max-h-12 rounded-lg border border-white/10" />}
                         {/* promotionProofUrl exists only on the unmasked
                             branch (canViewCosts=true) - checked via 'in'. */}
                         {'promotionProofUrl' in p && p.promotionProofUrl && (
-                          <ImageLightbox src={p.promotionProofUrl} alt="إثبات الترويج" className="max-h-12 rounded-lg border border-white/10" />
+                          <ImageLightbox src={p.promotionProofUrl} alt={t.merchantTeam.promotionProofAlt} className="max-h-12 rounded-lg border border-white/10" />
                         )}
-                        <p className="text-lg font-bold text-emerald-300">{formatMoney(p.amount)} د.ع</p>
+                        <p className="text-lg font-bold text-emerald-300">{formatMoney(p.amount)} {t.common.currency}</p>
                       </div>
                     </div>
                   ))}
                 </div>
               ) : (
-                <p className="text-sm text-white/30">لا توجد دفعات سابقة</p>
+                <p className="text-sm text-white/30">{t.merchantTeam.noPreviousPayouts}</p>
               )}
             </div>
 
             <div className="space-y-2">
-              <h3 className="text-sm font-semibold text-white/50">تفاصيل الحصص غير المدفوعة</h3>
+              <h3 className="text-sm font-semibold text-white/50">{t.merchantTeam.unpaidSharesDetail}</h3>
               {myShareDetails.isLoading ? (
-                <p className="text-center text-white/40 py-4">جاري التحميل...</p>
+                <p className="text-center text-white/40 py-4">{t.common.loading}</p>
               ) : myShareDetails.data && myShareDetails.data.length > 0 ? (
                 <Accordion type="single" collapsible className="space-y-2">
                   {myShareDetails.data.map(share => (
@@ -275,7 +264,7 @@ export default function MerchantTeam() {
                               assumed, since MaskedMerchantShareDetail omits it
                               entirely. */}
                           {'shareAmount' in share && (
-                            <span className="text-emerald-300 font-bold shrink-0">{formatMoney(share.shareAmount)} د.ع</span>
+                            <span className="text-emerald-300 font-bold shrink-0">{formatMoney(share.shareAmount)} {t.common.currency}</span>
                           )}
                         </div>
                       </AccordionTrigger>
@@ -284,25 +273,25 @@ export default function MerchantTeam() {
                           {'shareAmount' in share ? (
                             <>
                               <p className="text-sm text-white/50">
-                                صافي الربح: <span className="text-white/70">{formatMoney(share.settlement.netProfit)} د.ع</span>
-                                <span className="ms-3">كلفة الترويج: <span className="text-white/70">{formatMoney(share.settlement.promotionCost)} د.ع</span></span>
+                                {t.merchantTeam.netProfitLabel}<span className="text-white/70">{formatMoney(share.settlement.netProfit)} {t.common.currency}</span>
+                                <span className="ms-3">{t.merchantTeam.promotionCostLabel2}<span className="text-white/70">{formatMoney(share.settlement.promotionCost)} {t.common.currency}</span></span>
                               </p>
                               {share.settlement.promotionProofUrl && (
-                                <ImageLightbox src={share.settlement.promotionProofUrl} alt="إثبات الترويج" className="max-h-24 rounded-lg border border-white/10" />
+                                <ImageLightbox src={share.settlement.promotionProofUrl} alt={t.merchantTeam.promotionProofAlt} className="max-h-24 rounded-lg border border-white/10" />
                               )}
                               <div className="overflow-x-auto">
                                 <table className="w-full text-xs">
                                   <thead>
                                     <tr className="text-white/40 border-b border-white/10">
-                                      <th className="text-start py-1 pe-3 font-normal">المنتج</th>
-                                      <th className="text-start py-1 pe-3 font-normal">الكمية</th>
-                                      <th className="text-start py-1 pe-3 font-normal">السعر</th>
-                                      <th className="text-start py-1 pe-3 font-normal">تكلفة الجملة</th>
-                                      <th className="text-start py-1 pe-3 font-normal">تكلفة التوصيل</th>
-                                      <th className="text-start py-1 pe-3 font-normal">صافي الربح</th>
-                                      <th className="text-start py-1 pe-3 font-normal">المندوب</th>
-                                      <th className="text-start py-1 pe-3 font-normal">العمولة</th>
-                                      <th className="text-start py-1 font-normal">التاريخ</th>
+                                      <th className="text-start py-1 pe-3 font-normal">{t.merchantTeam.tableHeaders.product}</th>
+                                      <th className="text-start py-1 pe-3 font-normal">{t.merchantTeam.tableHeaders.quantity}</th>
+                                      <th className="text-start py-1 pe-3 font-normal">{t.merchantTeam.tableHeaders.price}</th>
+                                      <th className="text-start py-1 pe-3 font-normal">{t.merchantTeam.tableHeaders.wholesaleCost}</th>
+                                      <th className="text-start py-1 pe-3 font-normal">{t.merchantTeam.tableHeaders.deliveryCost}</th>
+                                      <th className="text-start py-1 pe-3 font-normal">{t.merchantTeam.tableHeaders.netProfit}</th>
+                                      <th className="text-start py-1 pe-3 font-normal">{t.merchantTeam.tableHeaders.salesRep}</th>
+                                      <th className="text-start py-1 pe-3 font-normal">{t.merchantTeam.tableHeaders.commission}</th>
+                                      <th className="text-start py-1 font-normal">{t.merchantTeam.tableHeaders.date}</th>
                                     </tr>
                                   </thead>
                                   <tbody>
@@ -323,7 +312,7 @@ export default function MerchantTeam() {
                                 </table>
                               </div>
                               <p className="text-xs text-white/30">
-                                {share.orderCount} طلب — {share.distinctMerchantCount} مندوب — إجمالي عمولاتهم {share.totalCommission.toLocaleString()} د.ع
+                                {t.merchantTeam.commissionSummary(share.orderCount, share.distinctMerchantCount, share.totalCommission.toLocaleString(), t.common.currency)}
                               </p>
                             </>
                           ) : (
@@ -332,11 +321,11 @@ export default function MerchantTeam() {
                                 <table className="w-full text-xs">
                                   <thead>
                                     <tr className="text-white/40 border-b border-white/10">
-                                      <th className="text-start py-1 pe-3 font-normal">رقم الطلب</th>
-                                      <th className="text-start py-1 pe-3 font-normal">المنتج</th>
-                                      <th className="text-start py-1 pe-3 font-normal">الكمية</th>
-                                      <th className="text-start py-1 pe-3 font-normal">المندوب</th>
-                                      <th className="text-start py-1 font-normal">التاريخ</th>
+                                      <th className="text-start py-1 pe-3 font-normal">{t.merchantTeam.maskedTableHeaders.orderId}</th>
+                                      <th className="text-start py-1 pe-3 font-normal">{t.merchantTeam.maskedTableHeaders.product}</th>
+                                      <th className="text-start py-1 pe-3 font-normal">{t.merchantTeam.maskedTableHeaders.quantity}</th>
+                                      <th className="text-start py-1 pe-3 font-normal">{t.merchantTeam.maskedTableHeaders.salesRep}</th>
+                                      <th className="text-start py-1 font-normal">{t.merchantTeam.maskedTableHeaders.date}</th>
                                     </tr>
                                   </thead>
                                   <tbody>
@@ -352,7 +341,7 @@ export default function MerchantTeam() {
                                   </tbody>
                                 </table>
                               </div>
-                              <p className="text-xs text-white/30">{share.orderCount} طلب — {share.distinctMerchantCount} مندوب</p>
+                              <p className="text-xs text-white/30">{t.merchantTeam.orderMerchantSummary(share.orderCount, share.distinctMerchantCount)}</p>
                             </>
                           )}
                         </div>
@@ -361,7 +350,7 @@ export default function MerchantTeam() {
                   ))}
                 </Accordion>
               ) : (
-                <p className="text-sm text-white/30">لا توجد حصص غير مدفوعة حالياً</p>
+                <p className="text-sm text-white/30">{t.merchantTeam.noUnpaidShares}</p>
               )}
             </div>
           </section>
@@ -372,31 +361,31 @@ export default function MerchantTeam() {
           <section>
             <h2 className="flex items-center gap-2 text-lg font-bold text-white mb-4">
               <TrendingUp className="w-5 h-5 text-purple-300" />
-              ملخص الفريق بالكامل
+              {t.merchantTeam.fullTeamSummary}
             </h2>
             {subordinatesSummary.isLoading ? (
-              <p className="text-center text-white/40 py-8">جاري التحميل...</p>
+              <p className="text-center text-white/40 py-8">{t.common.loading}</p>
             ) : subordinatesSummary.data ? (
               <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
                 <div className="rounded-2xl bg-white/[0.03] border border-purple-500/20 p-5 text-center">
                   <p className="text-2xl font-black text-purple-300">{subordinatesSummary.data.subordinateCount}</p>
-                  <p className="text-xs text-white/40 mt-1">أفراد الفريق</p>
+                  <p className="text-xs text-white/40 mt-1">{t.merchantTeam.teamMembers}</p>
                 </div>
                 <div className="rounded-2xl bg-white/[0.03] border border-purple-500/20 p-5 text-center">
                   <p className="text-2xl font-black text-purple-300">{subordinatesSummary.data.settlementCount}</p>
-                  <p className="text-xs text-white/40 mt-1">عدد التسويات</p>
+                  <p className="text-xs text-white/40 mt-1">{t.merchantTeam.settlementCount}</p>
                 </div>
                 <div className="rounded-2xl bg-white/[0.03] border border-purple-500/20 p-5 text-center">
                   <p className="text-2xl font-black text-purple-300">{formatMoney(subordinatesSummary.data.totalNetProfit)}</p>
-                  <p className="text-xs text-white/40 mt-1">إجمالي صافي الربح (د.ع)</p>
+                  <p className="text-xs text-white/40 mt-1">{t.merchantTeam.totalNetProfitLabel(t.common.currency)}</p>
                 </div>
                 <div className="rounded-2xl bg-white/[0.03] border border-emerald-500/30 p-5 text-center">
                   <p className="text-2xl font-black text-emerald-300">{formatMoney(subordinatesSummary.data.totalManagerOverrideShare)}</p>
-                  <p className="text-xs text-white/40 mt-1">حصتك من الفريق (د.ع)</p>
+                  <p className="text-xs text-white/40 mt-1">{t.merchantTeam.yourTeamShareLabel(t.common.currency)}</p>
                 </div>
               </div>
             ) : (
-              <p className="text-center text-white/40 py-8">لا توجد بيانات بعد</p>
+              <p className="text-center text-white/40 py-8">{t.merchantTeam.noDataYet}</p>
             )}
           </section>
         )}
@@ -406,10 +395,10 @@ export default function MerchantTeam() {
           <section>
             <h2 className="flex items-center gap-2 text-lg font-bold text-white mb-4">
               <Layers className="w-5 h-5 text-purple-300" />
-              فريقي المباشر
+              {t.merchantTeam.directTeam}
             </h2>
             {mySubordinates.isLoading ? (
-              <p className="text-center text-white/40 py-8">جاري التحميل...</p>
+              <p className="text-center text-white/40 py-8">{t.common.loading}</p>
             ) : mySubordinates.data && mySubordinates.data.length > 0 ? (
               <div className="space-y-6">
                 {mySubordinates.data.map(({ merchant, settlements }) => (
@@ -423,7 +412,7 @@ export default function MerchantTeam() {
                         {settlements.map((s: any) => <SettlementRow key={s.id} settlement={s} viewerRole={role} />)}
                       </div>
                     ) : (
-                      <p className="text-sm text-white/30">لا توجد تسويات بعد</p>
+                      <p className="text-sm text-white/30">{t.merchantTeam.noSettlementsYet}</p>
                     )}
                   </div>
                 ))}
@@ -431,7 +420,7 @@ export default function MerchantTeam() {
             ) : (
               <div className="text-center py-12">
                 <Layers className="w-12 h-12 mx-auto text-white/20 mb-3" />
-                <p className="text-white/40">لا يوجد أعضاء في فريقك بعد</p>
+                <p className="text-white/40">{t.merchantTeam.noTeamMembers}</p>
               </div>
             )}
           </section>
@@ -450,25 +439,25 @@ export default function MerchantTeam() {
           <section>
             <h2 className="flex items-center gap-2 text-lg font-bold text-white mb-4">
               <TrendingUp className="w-5 h-5 text-purple-300" />
-              تفاصيل تسويات الفريق
+              {t.merchantTeam.teamSettlementDetails}
             </h2>
-            <p className="text-xs text-white/30 mb-3">اختر أي تابع لك (بأي عمق بالهيكل التنظيمي) لعرض تفاصيل تسوياته الكاملة</p>
+            <p className="text-xs text-white/30 mb-3">{t.merchantTeam.descendantPickerHint}</p>
 
             <Select value={selectedDescendantId} onValueChange={setSelectedDescendantId}>
-              <SelectTrigger className="mb-4"><SelectValue placeholder="اختر تابعاً" /></SelectTrigger>
+              <SelectTrigger className="mb-4"><SelectValue placeholder={t.merchantTeam.descendantPlaceholder} /></SelectTrigger>
               <SelectContent>
                 {myDescendants.data?.map(m => (
                   <SelectItem key={m.id} value={String(m.id)}>{m.name} — {ROLE_CONFIG[m.role].label}</SelectItem>
                 ))}
                 {myDescendants.data?.length === 0 && (
-                  <div className="px-2 py-4 text-sm text-white/40 text-center">لا يوجد تابعون بالهيكل التنظيمي</div>
+                  <div className="px-2 py-4 text-sm text-white/40 text-center">{t.merchantTeam.noDescendants}</div>
                 )}
               </SelectContent>
             </Select>
 
             {selectedDescendantId !== "" && (
               subordinateShareDetails.isLoading ? (
-                <p className="text-center text-white/40 py-4">جاري التحميل...</p>
+                <p className="text-center text-white/40 py-4">{t.common.loading}</p>
               ) : subordinateShareDetails.data && subordinateShareDetails.data.length > 0 ? (
                 <Accordion type="single" collapsible className="space-y-2">
                   {subordinateShareDetails.data.map(detail => (
@@ -490,25 +479,25 @@ export default function MerchantTeam() {
                           {'totalCommission' in detail ? (
                             <>
                               <p className="text-sm text-white/50">
-                                صافي الربح: <span className="text-white/70">{formatMoney(detail.settlement.netProfit)} د.ع</span>
-                                <span className="ms-3">كلفة الترويج: <span className="text-white/70">{formatMoney(detail.settlement.promotionCost)} د.ع</span></span>
+                                {t.merchantTeam.netProfitLabel}<span className="text-white/70">{formatMoney(detail.settlement.netProfit)} {t.common.currency}</span>
+                                <span className="ms-3">{t.merchantTeam.promotionCostLabel2}<span className="text-white/70">{formatMoney(detail.settlement.promotionCost)} {t.common.currency}</span></span>
                               </p>
                               {detail.settlement.promotionProofUrl && (
-                                <ImageLightbox src={detail.settlement.promotionProofUrl} alt="إثبات الترويج" className="max-h-24 rounded-lg border border-white/10" />
+                                <ImageLightbox src={detail.settlement.promotionProofUrl} alt={t.merchantTeam.promotionProofAlt} className="max-h-24 rounded-lg border border-white/10" />
                               )}
                               <div className="overflow-x-auto">
                                 <table className="w-full text-xs">
                                   <thead>
                                     <tr className="text-white/40 border-b border-white/10">
-                                      <th className="text-start py-1 pe-3 font-normal">المنتج</th>
-                                      <th className="text-start py-1 pe-3 font-normal">الكمية</th>
-                                      <th className="text-start py-1 pe-3 font-normal">السعر</th>
-                                      <th className="text-start py-1 pe-3 font-normal">تكلفة الجملة</th>
-                                      <th className="text-start py-1 pe-3 font-normal">تكلفة التوصيل</th>
-                                      <th className="text-start py-1 pe-3 font-normal">صافي الربح</th>
-                                      <th className="text-start py-1 pe-3 font-normal">المندوب</th>
-                                      <th className="text-start py-1 pe-3 font-normal">العمولة</th>
-                                      <th className="text-start py-1 font-normal">التاريخ</th>
+                                      <th className="text-start py-1 pe-3 font-normal">{t.merchantTeam.tableHeaders.product}</th>
+                                      <th className="text-start py-1 pe-3 font-normal">{t.merchantTeam.tableHeaders.quantity}</th>
+                                      <th className="text-start py-1 pe-3 font-normal">{t.merchantTeam.tableHeaders.price}</th>
+                                      <th className="text-start py-1 pe-3 font-normal">{t.merchantTeam.tableHeaders.wholesaleCost}</th>
+                                      <th className="text-start py-1 pe-3 font-normal">{t.merchantTeam.tableHeaders.deliveryCost}</th>
+                                      <th className="text-start py-1 pe-3 font-normal">{t.merchantTeam.tableHeaders.netProfit}</th>
+                                      <th className="text-start py-1 pe-3 font-normal">{t.merchantTeam.tableHeaders.salesRep}</th>
+                                      <th className="text-start py-1 pe-3 font-normal">{t.merchantTeam.tableHeaders.commission}</th>
+                                      <th className="text-start py-1 font-normal">{t.merchantTeam.tableHeaders.date}</th>
                                     </tr>
                                   </thead>
                                   <tbody>
@@ -529,7 +518,7 @@ export default function MerchantTeam() {
                                 </table>
                               </div>
                               <p className="text-xs text-white/30">
-                                {detail.orderCount} طلب — {detail.distinctMerchantCount} مندوب — إجمالي عمولاتهم {detail.totalCommission.toLocaleString()} د.ع
+                                {t.merchantTeam.commissionSummary(detail.orderCount, detail.distinctMerchantCount, detail.totalCommission.toLocaleString(), t.common.currency)}
                               </p>
                             </>
                           ) : (
@@ -538,11 +527,11 @@ export default function MerchantTeam() {
                                 <table className="w-full text-xs">
                                   <thead>
                                     <tr className="text-white/40 border-b border-white/10">
-                                      <th className="text-start py-1 pe-3 font-normal">رقم الطلب</th>
-                                      <th className="text-start py-1 pe-3 font-normal">المنتج</th>
-                                      <th className="text-start py-1 pe-3 font-normal">الكمية</th>
-                                      <th className="text-start py-1 pe-3 font-normal">المندوب</th>
-                                      <th className="text-start py-1 font-normal">التاريخ</th>
+                                      <th className="text-start py-1 pe-3 font-normal">{t.merchantTeam.maskedTableHeaders.orderId}</th>
+                                      <th className="text-start py-1 pe-3 font-normal">{t.merchantTeam.maskedTableHeaders.product}</th>
+                                      <th className="text-start py-1 pe-3 font-normal">{t.merchantTeam.maskedTableHeaders.quantity}</th>
+                                      <th className="text-start py-1 pe-3 font-normal">{t.merchantTeam.maskedTableHeaders.salesRep}</th>
+                                      <th className="text-start py-1 font-normal">{t.merchantTeam.maskedTableHeaders.date}</th>
                                     </tr>
                                   </thead>
                                   <tbody>
@@ -558,7 +547,7 @@ export default function MerchantTeam() {
                                   </tbody>
                                 </table>
                               </div>
-                              <p className="text-xs text-white/30">{detail.orderCount} طلب — {detail.distinctMerchantCount} مندوب</p>
+                              <p className="text-xs text-white/30">{t.merchantTeam.orderMerchantSummary(detail.orderCount, detail.distinctMerchantCount)}</p>
                             </>
                           )}
                         </div>
@@ -567,7 +556,7 @@ export default function MerchantTeam() {
                   ))}
                 </Accordion>
               ) : (
-                <p className="text-sm text-white/30 py-4">لا توجد تسويات مؤكدة لهذا التابع بعد</p>
+                <p className="text-sm text-white/30 py-4">{t.merchantTeam.noConfirmedSettlementsForDescendant}</p>
               )
             )}
           </section>
@@ -584,10 +573,10 @@ export default function MerchantTeam() {
           <section>
             <h2 className="flex items-center gap-2 text-lg font-bold text-white mb-4">
               <Radio className="w-5 h-5 text-purple-300" />
-              طلبات الفريق الحية
+              {t.merchantTeam.liveTeamOrders}
             </h2>
             {liveTeamOrders.isLoading ? (
-              <p className="text-center text-white/40 py-8">جاري التحميل...</p>
+              <p className="text-center text-white/40 py-8">{t.common.loading}</p>
             ) : liveTeamOrders.data && liveTeamOrders.data.length > 0 ? (
               <Accordion type="single" collapsible className="space-y-2">
                 {liveTeamOrders.data.map((branch: any) => (
@@ -603,9 +592,9 @@ export default function MerchantTeam() {
                           <RoleBadge role={branch.merchant.role} />
                         </div>
                         <span className="text-xs text-white/40 shrink-0">
-                          {formatRoleCounts(branch.roleCounts)}
-                          {formatRoleCounts(branch.roleCounts) && " — "}
-                          {branch.orders.length} طلب
+                          {formatRoleCounts(branch.roleCounts, t.merchantTeam.roleCountWords)}
+                          {formatRoleCounts(branch.roleCounts, t.merchantTeam.roleCountWords) && " — "}
+                          {t.merchantTeam.ordersCount(branch.orders.length)}
                         </span>
                       </div>
                     </AccordionTrigger>
@@ -619,22 +608,22 @@ export default function MerchantTeam() {
                                   <div className="flex items-center gap-2 flex-wrap">
                                     <span className="font-semibold text-white">#{order.id}</span>
                                     <Badge className={`${ORDER_STATUS_COLORS[order.status] || "bg-white/10 text-white/60"} border`}>
-                                      {ORDER_STATUS_LABELS[order.status] || order.status}
+                                      {t.common.status[order.status as keyof typeof t.common.status] || order.status}
                                     </Badge>
                                     <span className="text-xs text-white/30">{order.merchantName}</span>
                                   </div>
-                                  <p className="text-sm text-white/60"><span className="text-white/40">المنتج:</span> {order.productType} × {order.quantity}</p>
-                                  <p className="text-sm text-white/60"><span className="text-white/40">العنوان:</span> {order.province} - {order.district}</p>
+                                  <p className="text-sm text-white/60"><span className="text-white/40">{t.merchantTeam.productLabel}</span> {order.productType} × {order.quantity}</p>
+                                  <p className="text-sm text-white/60"><span className="text-white/40">{t.merchantTeam.addressLabel}</span> {order.province} - {order.district}</p>
                                   {order.grossProfitAtOrderTime !== undefined && (
                                     <p className="text-sm text-white/60">
-                                      <span className="text-white/40">تكلفة الجملة:</span> {formatMoney(order.wholesaleCostAtOrderTime)} د.ع
-                                      <span className="ms-3 text-white/40">تكلفة التوصيل:</span> {formatMoney(order.deliveryCostAtOrderTime)} د.ع
-                                      <span className="ms-3 text-white/40">صافي الربح:</span> {formatMoney(order.grossProfitAtOrderTime)} د.ع
+                                      <span className="text-white/40">{t.merchantTeam.wholesaleCostLabel}</span> {formatMoney(order.wholesaleCostAtOrderTime)} {t.common.currency}
+                                      <span className="ms-3 text-white/40">{t.merchantTeam.deliveryCostLabel}</span> {formatMoney(order.deliveryCostAtOrderTime)} {t.common.currency}
+                                      <span className="ms-3 text-white/40">{t.merchantTeam.netProfitColonLabel}</span> {formatMoney(order.grossProfitAtOrderTime)} {t.common.currency}
                                     </p>
                                   )}
                                 </div>
                                 <div className="text-start shrink-0">
-                                  <p className="text-lg font-bold text-purple-300">{Number(order.totalPrice).toLocaleString()} د.ع</p>
+                                  <p className="text-lg font-bold text-purple-300">{Number(order.totalPrice).toLocaleString()} {t.common.currency}</p>
                                   <p className="text-xs text-white/30 mt-1">{new Date(order.createdAt).toLocaleDateString("ar-IQ")}</p>
                                 </div>
                               </div>
@@ -642,7 +631,7 @@ export default function MerchantTeam() {
                           ))}
                         </div>
                       ) : (
-                        <p className="text-sm text-white/30 pb-2">لا توجد طلبات لهذا الفرع بعد</p>
+                        <p className="text-sm text-white/30 pb-2">{t.merchantTeam.noOrdersForBranch}</p>
                       )}
                     </AccordionContent>
                   </AccordionItem>
@@ -651,7 +640,7 @@ export default function MerchantTeam() {
             ) : (
               <div className="text-center py-12">
                 <Radio className="w-12 h-12 mx-auto text-white/20 mb-3" />
-                <p className="text-white/40">لا يوجد أعضاء في فريقك بعد</p>
+                <p className="text-white/40">{t.merchantTeam.noTeamMembers}</p>
               </div>
             )}
           </section>
@@ -665,10 +654,10 @@ export default function MerchantTeam() {
           <section>
             <h2 className="flex items-center gap-2 text-lg font-bold text-white mb-4">
               <TrendingUp className="w-5 h-5 text-purple-300" />
-              تسوياتي
+              {t.merchantTeam.mySettlements}
             </h2>
             {mySettlements.isLoading ? (
-              <p className="text-center text-white/40 py-8">جاري التحميل...</p>
+              <p className="text-center text-white/40 py-8">{t.common.loading}</p>
             ) : mySettlements.data && mySettlements.data.length > 0 ? (
               <div className="space-y-3">
                 {mySettlements.data.map((s: any) => <SettlementRow key={s.id} settlement={s} viewerRole={role} />)}
@@ -676,7 +665,7 @@ export default function MerchantTeam() {
             ) : (
               <div className="text-center py-12">
                 <TrendingUp className="w-12 h-12 mx-auto text-white/20 mb-3" />
-                <p className="text-white/40">لا توجد تسويات أرباح بعد</p>
+                <p className="text-white/40">{t.merchantTeam.noProfitSettlements}</p>
               </div>
             )}
           </section>

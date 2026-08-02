@@ -3,6 +3,14 @@
 
 @custom-variant dark (&:is(.dark *));
 
+@font-face {
+  font-family: "UniqueKurdish";
+  src: url("./assets/fonts/Peshang_Des_5_Bold.ttf") format("truetype");
+  font-weight: bold;
+  font-style: normal;
+  font-display: swap;
+}
+
 @theme inline {
   --radius-sm: calc(var(--radius) - 4px);
   --radius-md: calc(var(--radius) - 2px);
@@ -121,6 +129,19 @@
   body {
     @apply bg-background text-foreground;
     font-family: 'Cairo', system-ui, -apple-system, sans-serif;
+  }
+  /* Kurdish (Sorani) font — only applied when LanguageContext toggles this
+     class on <html>, and only outside /admin routes (see LanguageContext.tsx
+     isAdminRoute guard). Higher specificity than the plain `body` rule above
+     so it wins without needing !important. */
+  :root.font-kurdish body {
+    font-family: "UniqueKurdish", "Cairo", system-ui, -apple-system, sans-serif;
+  }
+  /* Escape hatch for Latin-only text (brand names, English proper nouns)
+     that must always render in Cairo even while the Kurdish font is active
+     on the rest of the page — e.g. "IBRAHIM WALEED" in MerchantDashboard.tsx. */
+  .font-latin-fixed {
+    font-family: 'Cairo', system-ui, -apple-system, sans-serif !important;
   }
   /* RTL support */
   [dir="rtl"] {
