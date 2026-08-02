@@ -271,6 +271,8 @@ export const appRouter = router({
         merchantName: z.string(),
         customerName: z.string().min(2).max(255),
         customerPhone: z.string().min(6).max(20),
+        customerInstagram: z.string().max(255).optional(),
+        customerPhone2: z.string().max(20).optional(),
         productType: z.string().min(1).max(255),
         productPrice: z.number().int().min(0),
         quantity: z.number().int().min(1).default(1),

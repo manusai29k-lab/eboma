@@ -145,6 +145,11 @@ export const physicalOrders = mysqlTable("physical_orders", {
   merchantName: varchar("merchantName", { length: 255 }).notNull(),
   customerName: varchar("customerName", { length: 255 }).notNull(),
   customerPhone: varchar("customerPhone", { length: 20 }).notNull(),
+  // Optional Instagram username/handle for the customer, collected alongside
+  // the phone number for merchants who prefer contacting via Instagram.
+  customerInstagram: varchar("customerInstagram", { length: 255 }),
+  // Optional secondary phone number, for customers who give two numbers.
+  customerPhone2: varchar("customerPhone2", { length: 20 }),
   productType: varchar("productType", { length: 255 }).notNull(),
   productPrice: int("productPrice").notNull(),
   quantity: int("quantity").notNull().default(1),

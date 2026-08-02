@@ -26,6 +26,8 @@ export default function MerchantPhysical() {
 
   const [customerName, setCustomerName] = useState("");
   const [customerPhone, setCustomerPhone] = useState("");
+  const [customerInstagram, setCustomerInstagram] = useState("");
+  const [customerPhone2, setCustomerPhone2] = useState("");
   const [productType, setProductType] = useState("");
   const [productPrice, setProductPrice] = useState("");
   const [quantity, setQuantity] = useState("1");
@@ -100,6 +102,8 @@ export default function MerchantPhysical() {
       merchantName: merchantMe.data.name,
       customerName,
       customerPhone,
+      customerInstagram: customerInstagram || undefined,
+      customerPhone2: customerPhone2 || undefined,
       productType,
       productPrice: price,
       quantity: qty,
@@ -155,6 +159,16 @@ export default function MerchantPhysical() {
               <div className="space-y-2">
                 <Label htmlFor="customerPhone" className="text-white/70 text-sm">رقم العميل *</Label>
                 <Input id="customerPhone" type="tel" placeholder="أدخل رقم هاتف العميل" value={customerPhone} onChange={(e) => setCustomerPhone(e.target.value)} disabled={isSubmitting} dir="ltr" className={`text-end ${inputClass}`} />
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="customerInstagram" className="text-white/70 text-sm">يوزر انستقرام أو اسم الحساب</Label>
+                <Input id="customerInstagram" placeholder="أدخل يوزر انستقرام أو اسم الحساب (اختياري)" value={customerInstagram} onChange={(e) => setCustomerInstagram(e.target.value)} disabled={isSubmitting} dir="ltr" className={`text-end ${inputClass}`} />
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="customerPhone2" className="text-white/70 text-sm">رقم هاتف آخر (اختياري)</Label>
+                <Input id="customerPhone2" type="tel" placeholder="أدخل رقم هاتف آخر (اختياري)" value={customerPhone2} onChange={(e) => setCustomerPhone2(e.target.value)} disabled={isSubmitting} dir="ltr" className={`text-end ${inputClass}`} />
               </div>
 
               <div className="space-y-2">

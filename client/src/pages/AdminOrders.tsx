@@ -238,6 +238,8 @@ export default function AdminOrders() {
                             <div>
                               <p>{order.customerName}</p>
                               <p className="text-xs text-muted-foreground" dir="ltr">{order.customerPhone}</p>
+                              {order.customerPhone2 && <p className="text-xs text-muted-foreground" dir="ltr">{order.customerPhone2}</p>}
+                              {order.customerInstagram && <p className="text-xs text-muted-foreground">{order.customerInstagram}</p>}
                             </div>
                           </TableCell>
                           <TableCell>{order.productType}</TableCell>

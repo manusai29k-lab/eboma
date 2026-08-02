@@ -105,6 +105,8 @@ export default function MerchantOrders() {
                         </div>
                         <p className="text-sm text-white/60"><span className="text-white/40">العميل:</span> {order.customerName}</p>
                         <p className="text-sm text-white/60"><span className="text-white/40">الهاتف:</span> <span dir="ltr">{order.customerPhone}</span></p>
+                        {order.customerPhone2 && <p className="text-sm text-white/60"><span className="text-white/40">هاتف آخر:</span> <span dir="ltr">{order.customerPhone2}</span></p>}
+                        {order.customerInstagram && <p className="text-sm text-white/60"><span className="text-white/40">انستقرام:</span> {order.customerInstagram}</p>}
                         <p className="text-sm text-white/60"><span className="text-white/40">المنتج:</span> {order.productType} × {order.quantity}</p>
                         <p className="text-sm text-white/60"><span className="text-white/40">العنوان:</span> {order.province} - {order.district}</p>
                         {order.notes && <p className="text-sm text-white/60"><span className="text-white/40">ملاحظات:</span> {order.notes}</p>}
