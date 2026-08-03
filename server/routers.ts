@@ -468,6 +468,7 @@ export const appRouter = router({
     create: appAdminProcedure
       .input(z.object({
         name: z.string().min(1).max(255),
+        nameKu: z.string().max(255).optional(),
         price: z.number().int().min(0),
         type: z.string().min(1).max(255),
         description: z.string().optional(),
@@ -488,6 +489,7 @@ export const appRouter = router({
       .input(z.object({
         id: z.number(),
         name: z.string().min(1).max(255).optional(),
+        nameKu: z.string().max(255).optional(),
         price: z.number().int().min(0).optional(),
         type: z.string().min(1).max(255).optional(),
         description: z.string().optional(),

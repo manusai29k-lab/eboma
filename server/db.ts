@@ -352,7 +352,7 @@ export async function updateAdminPasscode(id: number, hashedPasscode: string): P
 
 // ==================== Physical Products ====================
 
-export async function createPhysicalProduct(data: { name: string; price: number; type: string; description?: string; stock?: number; imageKey?: string; imageUrl?: string; wholesaleCost?: number; deliveryCost?: number; minPrice?: number }): Promise<PhysicalProduct> {
+export async function createPhysicalProduct(data: { name: string; nameKu?: string; price: number; type: string; description?: string; stock?: number; imageKey?: string; imageUrl?: string; wholesaleCost?: number; deliveryCost?: number; minPrice?: number }): Promise<PhysicalProduct> {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
   await db.insert(physicalProducts).values(data);
@@ -362,12 +362,13 @@ export async function createPhysicalProduct(data: { name: string; price: number;
 
 // Public/merchant-facing — deliberately excludes `stock` at the SELECT level
 // (not just hidden in the UI) so it can never leak through this endpoint.
-export async function getAllPhysicalProducts(): Promise<Array<Pick<PhysicalProduct, "id" | "name" | "price" | "type" | "description" | "imageUrl" | "createdAt" | "updatedAt">>> {
+export async function getAllPhysicalProducts(): Promise<Array<Pick<PhysicalProduct, "id" | "name" | "nameKu" | "price" | "type" | "description" | "imageUrl" | "createdAt" | "updatedAt">>> {
   const db = await getDb();
   if (!db) return [];
   return await db.select({
     id: physicalProducts.id,
     name: physicalProducts.name,
+    nameKu: physicalProducts.nameKu,
     price: physicalProducts.price,
     type: physicalProducts.type,
     description: physicalProducts.description,
@@ -384,7 +385,7 @@ export async function getAllPhysicalProductsAdmin(): Promise<PhysicalProduct[]> 
   return await db.select().from(physicalProducts).orderBy(desc(physicalProducts.createdAt));
 }
 
-export async function updatePhysicalProduct(id: number, data: Partial<{ name: string; price: number; type: string; description?: string; stock: number; imageKey: string; imageUrl: string; wholesaleCost: number; deliveryCost: number; minPrice: number }>): Promise<void> {
+export async function updatePhysicalProduct(id: number, data: Partial<{ name: string; nameKu: string; price: number; type: string; description?: string; stock: number; imageKey: string; imageUrl: string; wholesaleCost: number; deliveryCost: number; minPrice: number }>): Promise<void> {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
   await db.update(physicalProducts).set(data).where(eq(physicalProducts.id, id));

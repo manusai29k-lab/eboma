@@ -1,0 +1,1 @@
+ALTER TABLE `physical_products` ADD `nameKu` varchar(255);

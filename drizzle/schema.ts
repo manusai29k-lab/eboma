@@ -91,6 +91,10 @@ export type InsertAdmin = typeof admins.$inferInsert;
 export const physicalProducts = mysqlTable("physical_products", {
   id: int("id").autoincrement().primaryKey(),
   name: varchar("name", { length: 255 }).notNull(),
+  // Optional Kurdish (Sorani) display name — shown to merchants instead of
+  // `name` when their selected language is Kurdish, falling back to `name`
+  // if unset. See client/src/pages/MerchantPhysical.tsx's display helper.
+  nameKu: varchar("nameKu", { length: 255 }),
   price: int("price").notNull(), // stored in smallest currency unit (e.g. IQD)
   type: varchar("type", { length: 255 }).notNull(),
   description: text("description"),

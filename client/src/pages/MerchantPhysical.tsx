@@ -13,9 +13,17 @@ import { useState, useEffect } from "react";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { LanguageSwitcher } from "@/components/LanguageSwitcher";
 
+// Shows the product's Kurdish name only when Kurdish is active AND a
+// non-empty Kurdish name was actually entered by the admin - otherwise
+// always falls back to the (required) Arabic `name`.
+function getProductDisplayName(product: { name: string; nameKu?: string | null }, language: string) {
+  if (language === "ku" && product.nameKu) return product.nameKu;
+  return product.name;
+}
+
 export default function MerchantPhysical() {
   const [, setLocation] = useLocation();
-  const { t } = useLanguage();
+  const { t, language } = useLanguage();
   const merchantMe = trpc.merchant.me.useQuery(undefined, {
     refetchOnWindowFocus: false,
     retry: false,
@@ -279,13 +287,13 @@ export default function MerchantPhysical() {
               filteredCatalog.map((product) => (
                 <div key={product.id} className="rounded-xl bg-white/[0.03] border border-white/10 p-3 flex flex-col items-center text-center gap-2">
                   {product.imageUrl ? (
-                    <ImageLightbox src={product.imageUrl} alt={product.name} className="w-16 h-16 rounded-lg object-cover" />
+                    <ImageLightbox src={product.imageUrl} alt={getProductDisplayName(product, language)} className="w-16 h-16 rounded-lg object-cover" />
                   ) : (
                     <div className="w-16 h-16 rounded-lg bg-white/10 flex items-center justify-center">
                       <ImageOff className="w-6 h-6 text-white/30" />
                     </div>
                   )}
-                  <p className="text-sm font-medium text-white line-clamp-2">{product.name}</p>
+                  <p className="text-sm font-medium text-white line-clamp-2">{getProductDisplayName(product, language)}</p>
                   <p className="text-xs text-white/40">{product.price.toLocaleString()} {t.common.currency}</p>
                   <Button type="button" size="sm" variant="outline" className="border-violet-500/30 text-violet-300 hover:bg-violet-500/10 gap-1 w-full" onClick={() => pickProduct(product)}>
                     <Plus className="w-3.5 h-3.5" /> {t.merchantPhysical.addToOrder}

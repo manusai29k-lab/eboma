@@ -291,11 +291,12 @@ function PhysicalProductDialog({
 }: {
   title: string;
   trigger: React.ReactNode;
-  initial?: { name: string; price: number; type: string; description?: string | null; stock?: number; imageUrl?: string | null; wholesaleCost?: number | null; deliveryCost?: number | null; minPrice?: number | null };
-  onSubmit: (data: { name: string; price: number; type: string; description?: string; stock: number; wholesaleCost?: number; deliveryCost?: number; minPrice?: number; imageBase64?: string; imageName?: string }) => void;
+  initial?: { name: string; nameKu?: string | null; price: number; type: string; description?: string | null; stock?: number; imageUrl?: string | null; wholesaleCost?: number | null; deliveryCost?: number | null; minPrice?: number | null };
+  onSubmit: (data: { name: string; nameKu?: string; price: number; type: string; description?: string; stock: number; wholesaleCost?: number; deliveryCost?: number; minPrice?: number; imageBase64?: string; imageName?: string }) => void;
 }) {
   const [open, setOpen] = useState(false);
   const [name, setName] = useState(initial?.name ?? "");
+  const [nameKu, setNameKu] = useState(initial?.nameKu ?? "");
   const [price, setPrice] = useState(initial ? String(initial.price) : "");
   const [type, setType] = useState(initial?.type ?? "");
   const [description, setDescription] = useState(initial?.description ?? "");
@@ -324,6 +325,7 @@ function PhysicalProductDialog({
     }
     onSubmit({
       name,
+      nameKu: nameKu || undefined,
       price: parseInt(price),
       type,
       description: description || undefined,
@@ -365,6 +367,10 @@ function PhysicalProductDialog({
           <div className="space-y-2">
             <Label htmlFor="pp-name">اسم المنتج *</Label>
             <Input id="pp-name" value={name} onChange={(e) => setName(e.target.value)} />
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor="pp-name-ku">الاسم بالكردية (اختياري)</Label>
+            <Input id="pp-name-ku" value={nameKu} onChange={(e) => setNameKu(e.target.value)} />
           </div>
           <div className="grid grid-cols-2 gap-4">
             <div className="space-y-2">
