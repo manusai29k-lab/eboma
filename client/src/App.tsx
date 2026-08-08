@@ -18,6 +18,7 @@ import AdminOrders from "./pages/AdminOrders";
 import AdminProducts from "./pages/AdminProducts";
 import AdminMerchants from "./pages/AdminMerchants";
 import AdminReports from "./pages/AdminReports";
+import AdminProductProfitReport from "./pages/AdminProductProfitReport";
 import AdminSettlements from "./pages/AdminSettlements";
 import AdminOrgTree from "./pages/AdminOrgTree";
 import AdminProfitSettlements from "./pages/AdminProfitSettlements";
@@ -49,6 +50,7 @@ function Router() {
             <Route path="/products" component={AdminProducts} />
             <Route path="/merchants" component={AdminMerchants} />
             <Route path="/reports" component={AdminReports} />
+            <Route path="/product-profit" component={AdminProductProfitReport} />
             <Route path="/settlements" component={AdminSettlements} />
             <Route path="/org-tree" component={AdminOrgTree} />
             <Route path="/profit-settlements" component={AdminProfitSettlements} />

@@ -364,12 +364,24 @@ export const appRouter = router({
       .input(z.object({
         merchantId: z.number().optional(),
         productType: z.string().optional(),
+        productId: z.number().optional(),
         status: z.string().optional(),
         startDate: z.date().optional(),
         endDate: z.date().optional(),
       }))
       .query(async ({ input }) => {
         return await db.getFilteredPhysicalOrders(input);
+      }),
+
+    productProfitReport: appAdminProcedure
+      .input(z.object({
+        merchantId: z.number().optional(),
+        status: z.string().optional(),
+        startDate: z.date().optional(),
+        endDate: z.date().optional(),
+      }))
+      .query(async ({ input }) => {
+        return await db.getProductProfitReport(input);
       }),
   }),
 

@@ -540,6 +540,7 @@ export async function updatePhysicalOrderStatus(id: number, status: string): Pro
 export async function getFilteredPhysicalOrders(filters: {
   merchantId?: number;
   productType?: string;
+  productId?: number;
   status?: string;
   startDate?: Date;
   endDate?: Date;
@@ -549,6 +550,7 @@ export async function getFilteredPhysicalOrders(filters: {
   const conditions = [];
   if (filters.merchantId) conditions.push(eq(physicalOrders.merchantId, filters.merchantId));
   if (filters.productType) conditions.push(eq(physicalOrders.productType, filters.productType));
+  if (filters.productId) conditions.push(eq(physicalOrders.productId, filters.productId));
   if (filters.status) conditions.push(eq(physicalOrders.status, filters.status as any));
   if (filters.startDate) conditions.push(gte(physicalOrders.createdAt, filters.startDate));
   if (filters.endDate) conditions.push(lte(physicalOrders.createdAt, filters.endDate));
@@ -556,6 +558,66 @@ export async function getFilteredPhysicalOrders(filters: {
     return await db.select().from(physicalOrders).orderBy(desc(physicalOrders.createdAt));
   }
   return await db.select().from(physicalOrders).where(and(...conditions)).orderBy(desc(physicalOrders.createdAt));
+}
+
+/**
+ * Per-product profit aggregation for the admin "تقرير أرباح المنتجات" grid.
+ * Sums the frozen grossProfitAtOrderTime/totalPrice/quantity snapshots
+ * across all matching orders, grouped by productId. Only orders placed via
+ * the catalog picker (productId set) can appear here — free-text "إدخال
+ * يدوي" orders have no linked product and are inherently excluded by the
+ * inner join. Products since deleted are also excluded (join has nothing to
+ * show a name/image for).
+ */
+export async function getProductProfitReport(filters: {
+  merchantId?: number;
+  status?: string;
+  startDate?: Date;
+  endDate?: Date;
+}): Promise<Array<{
+  productId: number;
+  name: string;
+  nameKu: string | null;
+  imageUrl: string | null;
+  revenue: number;
+  profit: number;
+  orderCount: number;
+  unitsSold: number;
+}>> {
+  const db = await getDb();
+  if (!db) return [];
+
+  const conditions = [isNotNull(physicalOrders.productId)];
+  if (filters.merchantId) conditions.push(eq(physicalOrders.merchantId, filters.merchantId));
+  if (filters.status) conditions.push(eq(physicalOrders.status, filters.status as any));
+  if (filters.startDate) conditions.push(gte(physicalOrders.createdAt, filters.startDate));
+  if (filters.endDate) conditions.push(lte(physicalOrders.createdAt, filters.endDate));
+
+  const rows = await db.select({
+    productId: physicalOrders.productId,
+    name: physicalProducts.name,
+    nameKu: physicalProducts.nameKu,
+    imageUrl: physicalProducts.imageUrl,
+    revenue: sum(physicalOrders.totalPrice),
+    profit: sum(physicalOrders.grossProfitAtOrderTime),
+    orderCount: count(),
+    unitsSold: sum(physicalOrders.quantity),
+  })
+    .from(physicalOrders)
+    .innerJoin(physicalProducts, eq(physicalOrders.productId, physicalProducts.id))
+    .where(and(...conditions))
+    .groupBy(physicalOrders.productId, physicalProducts.name, physicalProducts.nameKu, physicalProducts.imageUrl);
+
+  return rows.map(r => ({
+    productId: r.productId as number,
+    name: r.name,
+    nameKu: r.nameKu,
+    imageUrl: r.imageUrl,
+    revenue: Number(r.revenue) || 0,
+    profit: Number(r.profit) || 0,
+    orderCount: Number(r.orderCount) || 0,
+    unitsSold: Number(r.unitsSold) || 0,
+  }));
 }
 
 // ==================== Digital Sales ====================
