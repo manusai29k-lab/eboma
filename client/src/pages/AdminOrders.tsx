@@ -262,7 +262,6 @@ export default function AdminOrders() {
                                 <SelectItem value="preparing">قيد التجهيز</SelectItem>
                                 <SelectItem value="shipped">تم الشحن</SelectItem>
                                 <SelectItem value="delivered">تم التسليم</SelectItem>
-                                <SelectItem value="cancelled">ملغي</SelectItem>
                                 <SelectItem value="returned">مرتجع</SelectItem>
                               </SelectContent>
                             </Select>

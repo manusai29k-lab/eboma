@@ -353,7 +353,7 @@ export const appRouter = router({
     updateStatus: appAdminProcedure
       .input(z.object({
         id: z.number(),
-        status: z.enum(["new", "preparing", "shipped", "delivered", "cancelled", "returned"]),
+        status: z.enum(["new", "preparing", "shipped", "delivered", "returned"]),
       }))
       .mutation(async ({ input }) => {
         await db.updatePhysicalOrderStatus(input.id, input.status);
